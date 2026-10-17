@@ -50,7 +50,7 @@
   background-color: #d9822b;
   color: #1b1208;
   cursor: pointer;
-  /* weft's scenes take the transition longhands (not the shorthand), one duration for the properties */
+  /* Longhands with one duration: weft before e0aced1 takes no transition shorthand or duration lists. */
   transition-property: background-color, transform;
   transition-duration: 0.12s;
   transition-timing-function: ease-out;

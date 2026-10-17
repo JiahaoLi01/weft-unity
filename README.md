@@ -74,7 +74,7 @@ Package Manager 里选 Weft → Samples → Demo → Import，然后菜单 **Wef
 
 weft 的 scene 页面只支持 CSS 的一部分（见 weft 的 `docs/compatibility.md`）。目前踩到的：
 
-- 过渡要写分开的属性（`transition-property`、`transition-duration`、`transition-timing-function`），`transition-duration` 只给一个值；`transition` 简写会让整页载入失败（`weft_view_load` 只返回 invalid argument），时长列表会在样式生效时成为场景诊断（整帧不画）。
+- 过渡：weft e0aced1 起支持 `transition` 简写，时长等列表与 `transition-property` 一一对应，样式写错时是诊断。更早的 weft 上要写分开的属性、只给一个时长：简写会让整页载入失败（`weft_view_load` 只返回 invalid argument），时长列表会在样式生效时成为场景诊断（整帧不画）。演示的样式按更早的写法写，两种 weft 都能用。
 - 锚点元素（`data-anchor`）的大小由布局决定：给它宽度并 `position: absolute`，否则它是占满一行的块。
 
 检查一个页面能不能载入、点击后发什么消息，不用开 Unity：
