@@ -1,0 +1,5 @@
+# Built by Scripts~/BuildWeft.ps1 from a weft checkout: the DLL and the .meta files that import it.
+Runtime/Plugins/
+Runtime/Plugins.meta
+# Build trees and test results.
+Build~/

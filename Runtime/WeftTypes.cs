@@ -1,0 +1,122 @@
+using System;
+using System.Runtime.InteropServices;
+
+namespace Weft
+{
+    /// <summary>A message of the page: weft.engine.send(name, value), or weft.engine.call (complete it by its call id).</summary>
+    public readonly struct WeftMessage
+    {
+        public readonly string Name;
+        /// <summary>The value as JSON text ("null" for none).</summary>
+        public readonly string Json;
+        /// <summary>The call's id for <see cref="WeftView.CompleteCall"/>; 0 for a message sent.</summary>
+        public readonly ulong CallId;
+
+        public WeftMessage(string name, string json, ulong callId)
+        {
+            Name = name;
+            Json = json;
+            CallId = callId;
+        }
+
+        public bool IsCall => CallId != 0;
+    }
+
+    public enum WeftDiagnosticKind
+    {
+        /// <summary>A script or task threw.</summary>
+        Script = 1,
+        /// <summary>A weft.engine handler or subscriber threw.</summary>
+        Handler = 2,
+        /// <summary>An animation frame callback threw.</summary>
+        Frame = 3,
+        /// <summary>The page's styles make no scene (the last frame stays), or an image it names is missing.</summary>
+        Scene = 4,
+    }
+
+    public readonly struct WeftDiagnostic
+    {
+        public readonly WeftDiagnosticKind Kind;
+        public readonly string Text;
+
+        public WeftDiagnostic(WeftDiagnosticKind kind, string text)
+        {
+            Kind = kind;
+            Text = text;
+        }
+    }
+
+    [Flags]
+    public enum WeftAnchorFlags : uint
+    {
+        Visible = 0,
+        Hidden = 1,
+        Behind = 2,
+        Offscreen = 4,
+    }
+
+    /// <summary>
+    /// Where the page's element with data-anchor="key" goes this frame: x, y in the View's logical px, scaled by
+    /// scale, ordered by depth (far to near among siblings).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WeftAnchor
+    {
+        public ulong Key;
+        public float X;
+        public float Y;
+        public float Scale;
+        public float Depth;
+        public WeftAnchorFlags Flags;
+        uint reserved;
+
+        public WeftAnchor(ulong key, float x, float y, float scale = 1, float depth = 0, WeftAnchorFlags flags = WeftAnchorFlags.Visible)
+        {
+            Key = key;
+            X = x;
+            Y = y;
+            Scale = scale;
+            Depth = depth;
+            Flags = flags;
+            reserved = 0;
+        }
+    }
+
+    public enum WeftPointerKind : uint
+    {
+        Move = 0,
+        Down = 1,
+        Up = 2,
+        Wheel = 3,
+        /// <summary>The pointer left the View.</summary>
+        Leave = 4,
+    }
+
+    /// <summary>MouseEvent.buttons: the buttons held after an event.</summary>
+    [Flags]
+    public enum WeftButtons : uint
+    {
+        None = 0,
+        Left = 1,
+        Right = 2,
+        Middle = 4,
+    }
+
+    /// <summary>What is under a point of the View.</summary>
+    public readonly struct WeftHit
+    {
+        /// <summary>Whether the topmost element taking pointer events is something other than the page's root.</summary>
+        public readonly bool Element;
+        /// <summary>That element's CSS cursor ("auto" when none declares one).</summary>
+        public readonly string Cursor;
+
+        public WeftHit(bool element, string cursor)
+        {
+            Element = element;
+            Cursor = cursor;
+        }
+
+        /// <summary>Whether the page takes a click here: an element that shows something to interact with.</summary>
+        public bool Interactive => Element && Cursor != "auto" && Cursor != "default" && Cursor != "none";
+    }
+}

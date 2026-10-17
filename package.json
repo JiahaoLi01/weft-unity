@@ -1,0 +1,20 @@
+{
+  "name": "com.jiahaoli.weft",
+  "version": "0.1.0",
+  "displayName": "Weft",
+  "description": "Weft pages (HTML-like scenes with CSS, React and D3) as game UI: the weft runtime as a native plugin, drawn on Unity's render thread with Direct3D 11, Direct3D 12 or Vulkan (Windows x64).",
+  "unity": "6000.0",
+  "author": {
+    "name": "JiahaoLi01",
+    "url": "https://github.com/JiahaoLi01"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JiahaoLi01/weft-unity.git"
+  },
+  "dependencies": {
+    "com.unity.modules.imgui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0"
+  },
+  "keywords": ["ui", "html", "css", "react", "d3"]
+}
