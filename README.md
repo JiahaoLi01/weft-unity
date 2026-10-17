@@ -13,10 +13,11 @@
 | `Scripts~/BuildWeft.ps1` | 用一份 weft 签出与 Unity 的插件头文件编译 DLL，放进 `Runtime/Plugins/x86_64`（连同导入它的 `.meta`，都不入库） |
 | `Runtime/` | 运行时程序集 `Weft.Runtime`（命名空间 `Weft`；不叫 `Weft`，免得 `Weft.dll` 与原生的 `weft.dll` 同名）：`WeftRuntime`、`WeftView`、`WeftPage`、合成着色器 |
 | `Tests/Runtime/` | PlayMode 测试（程序集 `Weft.Tests`） |
+| `Samples~/Demo` | 示例：手动试的全屏页面（Package Manager 里导入，菜单 Weft → 打开演示） |
 | `Native~/tests/` | 原生测试：用替身 Unity 接口在 D3D11 设备上驱动 `weft.dll`，不需要 Unity |
 | `Scripts~/RunTests.ps1` | 先跑原生测试，再在批处理模式下逐个图形 API 跑 PlayMode 测试（测试工程由脚本生成） |
 
-`~` 结尾的文件夹（`Native~`、`Scripts~`、编译用的 `Build~`）Unity 不导入，所以包里只有 `Runtime/` 与 `Tests/` 是资源（各带 `.meta`）。
+`~` 结尾的文件夹（`Native~`、`Scripts~`、`Samples~`、编译用的 `Build~`）Unity 不导入，所以包里只有 `Runtime/` 与 `Tests/` 是资源（各带 `.meta`）。
 
 ## 编译 weft.dll
 
@@ -64,6 +65,23 @@ if (!view.PointerOverPage) { /* 给游戏 */ }
 - 不是全屏的 View（`FullScreen = false`、`Size`）只画进 `view.Texture`，由游戏去显示（`RawImage` 或材质，用 `WeftComposite.Material`），指针事件由游戏用 `view.Pointer(...)` 给它，命中用 `view.HitTest(...)`。
 - 字体：默认是 Windows 的系统字体。要加字体文件，在第一个页面载入之前：`WeftRuntime.Start(); WeftRuntime.AddFont("Noto Serif SC", path, 400);`（比如 `[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]` 里）。
 - 一次运行（play）一个 weft 运行时：退出 play、域重载、退出游戏时停掉，下一次 play 从新的运行时开始（关掉域重载时也一样）。
+
+## 示例
+
+Package Manager 里选 Weft → Samples → Demo → Import，然后菜单 **Weft → 打开演示（新场景并进入 Play）**：一个全屏页面，可以试按钮的悬停、按下与点击（Unity 回事件确认）、页面调用 Unity（`weft.engine.call`）、滚轮缩放一张 `url()` 图片、指针坐标、Unity 推来的视图模型（图形 API、帧率、鼠标是否在页面元素上），以及跟着一个转动方块走的锚点标签；点页面元素以外的地方时点击归游戏，方块变色。说明见示例里的 `README.md`。
+
+## 写页面时注意
+
+weft 的 scene 页面只支持 CSS 的一部分（见 weft 的 `docs/compatibility.md`）。目前踩到的：
+
+- 过渡要写分开的属性（`transition-property`、`transition-duration`、`transition-timing-function`），`transition-duration` 只给一个值；`transition` 简写会让整页载入失败（`weft_view_load` 只返回 invalid argument），时长列表会在样式生效时成为场景诊断（整帧不画）。
+- 锚点元素（`data-anchor`）的大小由布局决定：给它宽度并 `position: absolute`，否则它是占满一行的块。
+
+检查一个页面能不能载入、点击后发什么消息，不用开 Unity：
+
+```powershell
+Build~/Native/Release/weft_unity_tests.exe --page Samples~/Demo/Page --click 93,127
+```
 
 ## 线程与渲染
 

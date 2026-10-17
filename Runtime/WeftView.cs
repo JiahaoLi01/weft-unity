@@ -39,6 +39,7 @@ namespace Weft
         readonly WeftPointerInput pointer = new WeftPointerInput();
         Action<WeftPointerKind, Vector2, WeftButtons, Vector2> sendPointer;
         double time;
+        float appliedScale;
         WeftPage loaded;
 
         /// <summary>The page's messages (weft.engine.send and weft.engine.call), during the View's Update.</summary>
@@ -289,6 +290,7 @@ namespace Weft
             view = handle;
             created = true;
             time = 0;
+            appliedScale = scale;
             surface = new WeftSurface();
             surface.Resize(pixels.x, pixels.y);
             if (loaded != null)
@@ -360,16 +362,21 @@ namespace Weft
             Pointer(kind, position, buttons, wheel);
         }
 
-        // The texture and the page at the View's size.
+        // The texture and the page at the View's size and scale.
         void Fit()
         {
             var pixels = PixelSize;
             var texture = surface.Texture;
-            if (texture && texture.width == pixels.x && texture.height == pixels.y)
+            var sized = texture && texture.width == pixels.x && texture.height == pixels.y;
+            if (sized && appliedScale == scale)
             {
                 return;
             }
-            surface.Resize(pixels.x, pixels.y);
+            if (!sized)
+            {
+                surface.Resize(pixels.x, pixels.y);
+            }
+            appliedScale = scale;
             WeftNative.weft_unity_view_resize(view, pixels.x / scale, pixels.y / scale, scale);
         }
 

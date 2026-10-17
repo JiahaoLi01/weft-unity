@@ -16,5 +16,18 @@
     "com.unity.modules.imgui": "1.0.0",
     "com.unity.modules.jsonserialize": "1.0.0"
   },
-  "keywords": ["ui", "html", "css", "react", "d3"]
+  "keywords": [
+    "ui",
+    "html",
+    "css",
+    "react",
+    "d3"
+  ],
+  "samples": [
+    {
+      "displayName": "Demo",
+      "description": "A full-screen page to try by hand: hover, press and click, a call to Unity, wheel zoom of a url() image, pointer coordinates, a view model, and a label anchored to a turning cube. Weft > 打开演示 opens it.",
+      "path": "Samples~/Demo"
+    }
+  ]
 }

@@ -12,6 +12,8 @@
 // Tools), and an error it reports fails the run.
 //
 //   weft_unity_tests [--api d3d11|d3d12] [--warp]
+//   weft_unity_tests --page <folder> [--click x,y]...   (a page.js and page.css loaded and run, clicked at CSS px:
+//                                                        the load's result, the page's diagnostics and messages)
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
@@ -776,6 +778,68 @@ int run_d3d12(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
 }
 } // namespace
 
+namespace {
+    std::string read_file(const std::string& path) {
+        std::string text;
+        FILE* file = nullptr;
+        if (fopen_s(&file, path.c_str(), "rb") == 0 && file) {
+            char buffer[65536];
+            for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), file)) > 0;) {
+                text.append(buffer, n);
+            }
+            std::fclose(file);
+        }
+        return text;
+    }
+
+    // --page <folder>: a folder's page.js and page.css loaded into a 1280 x 720 View and run for a few frames; the load's
+    // result and the page's diagnostics are printed.
+    int check_page(const std::string& folder, const std::vector<std::pair<float, float>>& clicks) {
+        const std::string script = read_file(folder + "/page.js");
+        const std::string css = read_file(folder + "/page.css");
+        const std::string base = folder + "/page.css";
+        if (weft_unity_start(WEFT_RUNTIME_SYSTEM_FONTS, 0) != WEFT_OK) {
+            std::printf("FAIL no runtime\n");
+            return 2;
+        }
+        const weft_view_desc desc{sizeof(desc), 0, 1280, 720, 1, 0};
+        weft_view_handle view{};
+        weft_unity_view_create(&desc, &view);
+        const weft_script s{"page.js", 7, script.data(), script.size()};
+        const weft_page_desc page{sizeof(page), 0, &s, 1, 0, css.data(), css.size(), nullptr, 0, nullptr, 0, base.data(), base.size()};
+        const weft_result loaded = weft_unity_view_load(view, &page);
+        std::printf("load: %s\n", weft_result_string(loaded));
+        for (int frame = 0; frame < 3 + int(clicks.size()); ++frame) {
+            if (frame >= 3) {
+                // A click: a move, a press and a release of the primary button at the point.
+                const auto [x, y] = clicks[std::size_t(frame - 3)];
+                weft_hit hit{sizeof(hit)};
+                weft_unity_view_hit_test(view, x, y, &hit);
+                std::printf("click %.0f,%.0f on %s (cursor %s)\n", x, y, hit.element ? "an element" : "the root", hit.cursor);
+                const std::pair<weft_pointer_kind, std::uint32_t> steps[]{
+                    {WEFT_POINTER_MOVE, 0u}, {WEFT_POINTER_DOWN, 1u}, {WEFT_POINTER_UP, 0u}};
+                for (const auto& [kind, buttons] : steps) {
+                    const weft_pointer_event e{sizeof(e), std::uint32_t(kind), x, y, buttons, 0, 0, 0};
+                    std::uint32_t prevented = 0;
+                    const auto result = weft_unity_view_pointer(view, &e, &prevented);
+                    if (result != WEFT_OK) {
+                        std::printf("pointer %u: %s\n", std::uint32_t(kind), weft_result_string(result));
+                    }
+                }
+            }
+            const auto out = advance(view, 0.016 * (frame + 1));
+            for (const auto& d : out.diagnostics) {
+                std::printf("diagnostic: %s\n", d.c_str());
+            }
+            for (const auto& [name, json] : out.messages) {
+                std::printf("message: %s %s\n", name.c_str(), json.c_str());
+            }
+        }
+        weft_unity_stop();
+        return loaded == WEFT_OK ? 0 : 1;
+    }
+} // namespace
+
 int main(int argc, char** argv) {
     bool warp = false;
     std::string api = "d3d11";
@@ -785,6 +849,16 @@ int main(int argc, char** argv) {
             warp = true;
         } else if (arg == "--api" && i + 1 < argc) {
             api = argv[++i];
+        } else if (arg == "--page" && i + 1 < argc) {
+            // Then --click x,y ... (CSS px).
+            std::vector<std::pair<float, float>> clicks;
+            for (int j = i + 2; j + 1 < argc && std::string_view(argv[j]) == "--click"; j += 2) {
+                float x = 0, y = 0;
+                if (sscanf_s(argv[j + 1], "%f,%f", &x, &y) == 2) {
+                    clicks.emplace_back(x, y);
+                }
+            }
+            return check_page(argv[i + 1], clicks);
         }
     }
     std::printf("weft_unity_tests on %s%s\n", api.c_str(), warp ? " (WARP)" : "");
