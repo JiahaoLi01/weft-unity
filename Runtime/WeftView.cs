@@ -41,6 +41,13 @@ namespace Weft
         double time;
         float appliedScale;
         WeftPage loaded;
+        // What the calls of every frame encode into (names, JSON) and the last cursor's bytes and name: they allocate
+        // nothing while what they carry fits and the cursor stays.
+        byte[] nameBuffer;
+        byte[] valueBuffer;
+        readonly byte[] cursorBytes = new byte[32];
+        int cursorLength = -1;
+        string cursorName = "auto";
 
         /// <summary>The page's messages (weft.engine.send and weft.engine.call), during the View's Update.</summary>
         public event Action<WeftMessage> MessageReceived;
@@ -181,13 +188,13 @@ namespace Weft
             {
                 return false;
             }
-            var nameBytes = WeftRuntime.Utf8(name);
-            var value = WeftRuntime.Utf8(string.IsNullOrEmpty(json) ? "null" : json);
-            fixed (byte* n = nameBytes)
-            fixed (byte* v = value)
+            var nameLength = WeftRuntime.Utf8(name, ref nameBuffer);
+            var valueLength = WeftRuntime.Utf8(string.IsNullOrEmpty(json) ? "null" : json, ref valueBuffer);
+            fixed (byte* n = nameBuffer)
+            fixed (byte* v = valueBuffer)
             {
-                return WeftNative.weft_view_emit(WeftRuntime.Native, view, n, (UIntPtr)nameBytes.Length, WeftNative.ValueJson, v,
-                    (UIntPtr)value.Length, latest ? WeftNative.EmitLatest : 0) == WeftNative.Result.Ok;
+                return WeftNative.weft_view_emit(WeftRuntime.Native, view, n, (UIntPtr)nameLength, WeftNative.ValueJson, v,
+                    (UIntPtr)valueLength, latest ? WeftNative.EmitLatest : 0) == WeftNative.Result.Ok;
             }
         }
 
@@ -198,13 +205,13 @@ namespace Weft
             {
                 return false;
             }
-            var modelBytes = WeftRuntime.Utf8(model);
-            var fields = WeftRuntime.Utf8(fieldsJson);
-            fixed (byte* m = modelBytes)
-            fixed (byte* f = fields)
+            var modelLength = WeftRuntime.Utf8(model, ref nameBuffer);
+            var fieldsLength = WeftRuntime.Utf8(fieldsJson, ref valueBuffer);
+            fixed (byte* m = nameBuffer)
+            fixed (byte* f = valueBuffer)
             {
-                return WeftNative.weft_view_set_model(WeftRuntime.Native, view, m, (UIntPtr)modelBytes.Length, WeftNative.ValueJson, f,
-                    (UIntPtr)fields.Length) == WeftNative.Result.Ok;
+                return WeftNative.weft_view_set_model(WeftRuntime.Native, view, m, (UIntPtr)modelLength, WeftNative.ValueJson, f,
+                    (UIntPtr)fieldsLength) == WeftNative.Result.Ok;
             }
         }
 
@@ -216,11 +223,11 @@ namespace Weft
             {
                 return false;
             }
-            var value = WeftRuntime.Utf8(string.IsNullOrEmpty(json) ? "null" : json);
-            fixed (byte* v = value)
+            var valueLength = WeftRuntime.Utf8(string.IsNullOrEmpty(json) ? "null" : json, ref valueBuffer);
+            fixed (byte* v = valueBuffer)
             {
                 return WeftNative.weft_view_complete_call(WeftRuntime.Native, view, callId, succeeded ? 1u : 0u, WeftNative.ValueJson, v,
-                    (UIntPtr)value.Length) == WeftNative.Result.Ok;
+                    (UIntPtr)valueLength) == WeftNative.Result.Ok;
             }
         }
 
@@ -271,8 +278,32 @@ namespace Weft
             {
                 return new WeftHit(false, "auto");
             }
-            var cursor = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)hit.Cursor) ?? "auto";
-            return new WeftHit(hit.Element != 0, cursor);
+            return new WeftHit(hit.Element != 0, CursorName(hit.Cursor));
+        }
+
+        // The cursor's name (NUL-terminated ASCII), the last one's string while its bytes are the last one's.
+        string CursorName(byte* text)
+        {
+            var length = 0;
+            while (length < cursorBytes.Length && text[length] != 0)
+            {
+                ++length;
+            }
+            var same = length == cursorLength;
+            for (var i = 0; same && i < length; ++i)
+            {
+                same = text[i] == cursorBytes[i];
+            }
+            if (!same)
+            {
+                for (var i = 0; i < length; ++i)
+                {
+                    cursorBytes[i] = text[i];
+                }
+                cursorLength = length;
+                cursorName = System.Text.Encoding.ASCII.GetString(text, length);
+            }
+            return cursorName;
         }
 
         void OnEnable()

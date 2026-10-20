@@ -168,6 +168,22 @@ namespace Weft
             return string.IsNullOrEmpty(text) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(text);
         }
 
+        // UTF-8 of text into a buffer of the caller's, grown when text needs more: calls made every frame allocate
+        // nothing once it is large enough. The bytes it wrote.
+        internal static int Utf8(string text, ref byte[] buffer)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+            var most = Encoding.UTF8.GetMaxByteCount(text.Length);
+            if (buffer == null || buffer.Length < most)
+            {
+                buffer = new byte[Math.Max(most, 256)];
+            }
+            return Encoding.UTF8.GetBytes(text, 0, text.Length, buffer, 0);
+        }
+
         internal static void Check(WeftNative.Result result, string what)
         {
             if (result != WeftNative.Result.Ok)

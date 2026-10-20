@@ -90,7 +90,7 @@ Build~/Native/Release/weft_unity_tests.exe --page Samples~/Demo/Page --click 93,
 ## 线程与渲染
 
 - weft 的页面要 8 MiB 以上的栈（React、D3），Unity 主线程只有 1 MiB：插件开一个 16 MiB 栈的线程（owner 线程）跑运行时，`weft_unity_*` 里要 owner 的函数把工作交给它并等它做完。事件、视图模型、调用的完成与锚点是 weft 的"任意线程"函数，直接调。
-- 每帧：`Update` 里送指针、推进页面、分发消息；`LateUpdate` 把 View 最新的帧排进绘制队列（`weft_unity_queue_draw`，返回绘制号），再用 `CommandBuffer.IssuePluginEventAndData` 把绘制号交给渲染线程的插件事件。渲染线程按 Unity 的图形 API 用一个 `RenderDevice`：
+- 每帧：`Update` 里送指针、推进页面、分发消息；`LateUpdate` 把 View 最新的帧排进绘制队列（`weft_unity_queue_draw`，返回绘制号），再用 `CommandBuffer.IssuePluginEventAndData` 把绘制号交给渲染线程的插件事件。每帧调的不分配托管内存：`Emit`、`SetModel`、`CompleteCall` 把字符串编码进 View 自己的缓冲（够大之后不再分配），命中测试的光标名字节不变就是上一次的字符串。渲染线程按 Unity 的图形 API 用一个 `RenderDevice`：
   - D3D11：weft 的 D3D11 后端在 Unity 的即时上下文上画（目标的 RTV 用 UNORM 格式现做），用的是插件自己的上下文状态（`SwapDeviceContextState`），画完换回 Unity 的：Unity 缓存着即时上下文的状态，不会重新设置它以为已经设好的视口、着色器与资源。
   - D3D12：`IUnityGraphicsD3D12v8` 的 `CommandRecordingState` 给出 Unity 正在录的命令列表，目标先 `RequestResourceState` 到 render target；录制在 GPU 上完成与否看 Unity 的帧 fence（`GetNextFrameFenceValue` 与 fence 的完成值）。
   - Vulkan：`IUnityGraphicsVulkanV2` 的 `AccessTexture` 把目标转到 color attachment，事件配置成在 render pass 外，录进 Unity 的命令缓冲；完成看 `safeFrameNumber`。目标的 image view 由插件做、帧安全后销毁。
