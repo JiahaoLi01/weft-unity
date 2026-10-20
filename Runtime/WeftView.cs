@@ -139,7 +139,8 @@ namespace Weft
                     var desc = new WeftNative.PageDesc
                     {
                         StructSize = (uint)sizeof(WeftNative.PageDesc),
-                        Flags = next.CrpgBridge ? WeftNative.PageCrpgBridge : 0,
+                        Flags = (next.CrpgBridge ? WeftNative.PageCrpgBridge : 0) | (next.ForgivingCss ? WeftNative.PageForgivingCss : 0) |
+                                (next.WebPlatform ? WeftNative.PageWebPlatform : 0),
                         Scripts = s,
                         ScriptCount = (uint)scripts.Length,
                         Stylesheet = css,

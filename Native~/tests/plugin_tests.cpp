@@ -296,6 +296,37 @@ namespace {
         return out;
     }
 
+    // A camera's 8x8 render texture as Unity's are on D3D11: RGBA16F, its bottom row first in memory (Unity draws a
+    // camera's image into it upside down), the image's top half red and its bottom half grey (0.5, linear).
+    ID3D11Texture2D* make_camera_texture() {
+        constexpr std::uint16_t one = 0x3c00;
+        constexpr std::uint16_t half = 0x3800;
+        std::vector<std::uint16_t> texels(8 * 8 * 4);
+        for (UINT row = 0; row < 8; ++row) {
+            const bool top = row >= 4;
+            for (UINT x = 0; x < 8; ++x) {
+                auto* t = &texels[(row * 8 + x) * 4];
+                t[0] = top ? one : half;
+                t[1] = top ? 0 : half;
+                t[2] = top ? 0 : half;
+                t[3] = one;
+            }
+        }
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = 8;
+        desc.Height = 8;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R16G16B16A16_TYPELESS;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        const D3D11_SUBRESOURCE_DATA data{texels.data(), 8 * 4 * sizeof(std::uint16_t), 0};
+        ID3D11Texture2D* texture = nullptr;
+        device->CreateTexture2D(&desc, &data, &texture);
+        return texture;
+    }
+
     std::string hex(std::uint32_t bgra) {
         char text[16];
         std::snprintf(text, sizeof(text), "%08x", bgra);
@@ -432,6 +463,33 @@ int run_d3d11(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
         weft_unity_queue_draw(view, target, width, height, 1, 1);
     }
     check(weft_unity_queue_draw(view, target, width, height, 1, 1) != 0, "old draws are dropped, new ones queue");
+
+    watchdog.step("an engine texture");
+    // Bound by name, drawn upright by a View after the first, and by one after that View is gone, as a game's Views
+    // come and go.
+    ID3D11Texture2D* camera = make_camera_texture();
+    check(weft_unity_set_texture("probe", 5, camera, 8, 8) == WEFT_OK, "a texture is bound to a name");
+    constexpr std::string_view textured_script =
+        "document.getElementById('root').appendChild(document.createElement('div')).className = 't';";
+    const std::string textured_page = "#root{position:relative;width:100%;height:100%}"
+                                      ".t{position:absolute;left:0;top:0;width:64px;height:32px;"
+                                      "background-image:-weft-texture(probe);background-size:100% 100%}";
+    constexpr std::uint32_t grey = 0xffbcbcbc;
+    for (const char* which : {"a second View", "a View after it"}) {
+        auto textured = make_view(float(width), float(height));
+        load(textured, textured_script, textured_page);
+        advance(textured, 0.016);
+        const auto drawn = stats().draws;
+        render(weft_unity_queue_draw(textured, target, width, height, 1, 1));
+        pixels = read(target);
+        check(stats().draws == drawn + 1, std::string(which) + " draws (" + stats().last_failure + ")");
+        check(pixels[4 * width + 16] == red, std::string(which) + ": the texture's top at the page's top: " + hex(pixels[4 * width + 16]));
+        check(pixels[27 * width + 16] == grey,
+              std::string(which) + ": its bottom at the page's bottom, linear grey encoded: " + hex(pixels[27 * width + 16]));
+        weft_unity_view_destroy(textured);
+    }
+    check(weft_unity_set_texture("probe", 5, nullptr, 0, 0) == WEFT_OK, "the name is unbound");
+    camera->Release();
 
     watchdog.step("stopping");
     weft_unity_stop();

@@ -62,6 +62,17 @@ weft_result weft_unity_view_diagnostic(weft_view_handle view, uint32_t index, ui
 weft_result weft_unity_view_pointer(weft_view_handle view, const weft_pointer_event* event, uint32_t* out_prevented);
 weft_result weft_unity_view_hit_test(weft_view_handle view, float x, float y, weft_hit* out_hit);
 
+/* ---- The engine's textures: a page's background-image: -weft-texture(name). ---- */
+
+/* Binds a name the pages show by -weft-texture(name) to a texture of Unity's (Texture.GetNativeTexturePtr: an
+ * ID3D11Texture2D, an ID3D12Resource or a VkImage*), width x height its size, or unbinds it (texture NULL). The texture
+ * holds linear premultiplied RGBA, its bottom row first as Unity's render textures do: RGBA16F (ARGBHalf) on every API,
+ * linear RGBA8 (not sRGB) and RGBA32F where weft's backend samples them, and sRGB RGBA8 or BGRA8 on Direct3D 12. It is
+ * live: Unity may draw into it again before each draw that shows it (a camera rendered before the View's draw). Names
+ * are letters, digits, '-' and '_', at most 64 bytes; 32 at once (WEFT_CAPACITY_EXCEEDED). Any thread; stopping the
+ * runtime unbinds them all. A texture weft's backend cannot sample is logged once and draws nothing. */
+weft_result weft_unity_set_texture(const char* name, size_t name_size, void* texture, uint32_t width, uint32_t height);
+
 /* ---- Drawing, on Unity's render thread. ---- */
 
 /* Queues a View's latest frame to draw into a texture: target is the texture's native pointer

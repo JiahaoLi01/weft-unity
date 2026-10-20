@@ -2,7 +2,7 @@
 
 把 [weft](https://github.com/JiahaoLi01/weft)（HTML、CSS、DOM 与 JavaScript 的游戏 UI 运行时）接进 Unity 6 的包。页面在插件自己的线程上运行，帧由 weft 对应当前图形 API 的后端在 Unity 的渲染线程上画进一张渲染纹理：用的是 Unity 自己的 GPU 设备与命令列表，不经 CPU 拷贝，也不另开设备。
 
-当前状态（2026-10-17）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过（weft main 3379d90）。
+当前状态（2026-10-21）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过（weft `weft-op` 分支 6e34477）。
 
 ## 目录
 
@@ -55,6 +55,9 @@ view.SetModel("camera", "{\"tier\":\"Mid\"}");        // weft.engine.model('came
 // 每帧跟着场景走的元素：锚点（页面写 data-anchor="<Key>"），渲染线程直接移动，不跑脚本、不重排
 view.WriteAnchors(anchors);              // WeftAnchor: Key, X, Y（逻辑 px）, Scale, Depth, Flags
 
+// 引擎画的纹理：页面写 background-image: -weft-texture(minimap)，像 CSS 背景图一样铺排
+WeftRuntime.SetTexture("minimap", minimapTexture);   // 线性、预乘的 RGBA：相机的 ARGBHalf 渲染纹理
+
 // 游戏判断点击归谁
 if (!view.PointerOverPage) { /* 给游戏 */ }
 ```
@@ -65,6 +68,7 @@ if (!view.PointerOverPage) { /* 给游戏 */ }
 - 不是全屏的 View（`FullScreen = false`、`Size`）只画进 `view.Texture`，由游戏去显示（`RawImage` 或材质，用 `WeftComposite.Material`），指针事件由游戏用 `view.Pointer(...)` 给它，命中用 `view.HitTest(...)`。
 - 字体：默认是 Windows 的系统字体。要加字体文件，在第一个页面载入之前：`WeftRuntime.Start(); WeftRuntime.AddFont("Noto Serif SC", path, 400);`（比如 `[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]` 里）。
 - 一次运行（play）一个 weft 运行时：退出 play、域重载、退出游戏时停掉，下一次 play 从新的运行时开始（关掉域重载时也一样）。
+- 引擎纹理：`SetTexture` 绑的是纹理本身（GPU 上直接采样，不经 CPU），每帧画进去的新内容页面都看得到。要在 WeftView 的 `LateUpdate` 排进页面的绘制之前画好它：相机设成不自动渲染、在执行顺序早于 WeftView 的脚本的 `LateUpdate` 里 `Camera.Render()`，这样页面、纹理与锚点是同一帧的。纹理是 Unity 的（首行在下），weft 把它翻正；重建了纹理（改大小）就再绑一次，传 `null` 解绑，停掉运行时会解绑全部名字。支持的格式：RGBA16F、RGBA8（线性）、RGBA32F。
 
 ## 示例
 
@@ -101,14 +105,14 @@ powershell -File Scripts~/RunTests.ps1 -Apis d3d12
 powershell -File Scripts~/RunTests.ps1 -NativeOnly         # 只跑原生测试，不需要 Unity
 ```
 
-- 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
-- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时。
+- 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、引擎纹理在先后几个 View 里正着显示、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
+- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、引擎纹理（相机画的纹理在页面里正着显示、颜色按线性解码，解绑后不画，相机在 weft 画过之后照常渲染）、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时。
 - 测试工程由脚本生成在临时目录（`-ProjectDir`，默认 `%TEMP%/weft-unity-tests`），引用本仓库的包：路径里有 `~` 结尾的文件夹时，Unity 的测试框架找不到它自己的脚本，进入 play 后一直不开始测试。结果与日志在 `Build~/Tests/<api>.xml`、`.log`。批处理模式需要有效的 Unity 许可证。
 
 ## 限制
 
 - 只有 Windows x64；macOS（Metal）、Linux、主机平台等 weft 有对应的后端。
 - 输入只有鼠标（移动、按键、滚轮、离开），来自 Input System 或旧的 Input Manager；键盘、IME、触摸与手柄还没有。
-- 同步函数（`weft.engine.invoke`）与引擎纹理（`-weft-texture()`）还没有接。
+- 同步函数（`weft.engine.invoke`）还没有接。
 - 页面里的图片只有 PNG 背景图（`url()`），没有 `<img>`、JPEG 与 `data:` URL。
 - 全屏 View 在 OnGUI 里合成；URP、HDRP 下同样在所有相机之后画。

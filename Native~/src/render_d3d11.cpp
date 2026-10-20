@@ -29,6 +29,30 @@ namespace weft_unity {
             }
         }
 
+        // The view format weft samples a texture of the format through (linear: a D3D11 shader resource view of an sRGB
+        // texture is not one weft's backend takes), and weft's name of it; false for one it does not sample.
+        bool texture_format(DXGI_FORMAT format, DXGI_FORMAT& view, std::uint32_t& weft) {
+            switch (format) {
+            case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+            case DXGI_FORMAT_R16G16B16A16_FLOAT:
+                view = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                weft = WEFT_RENDER_TARGET_LINEAR_RGBA16F;
+                return true;
+            case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+            case DXGI_FORMAT_R8G8B8A8_UNORM:
+                view = DXGI_FORMAT_R8G8B8A8_UNORM;
+                weft = WEFT_RENDER_TARGET_LINEAR_RGBA8;
+                return true;
+            case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+            case DXGI_FORMAT_R32G32B32A32_FLOAT:
+                view = DXGI_FORMAT_R32G32B32A32_FLOAT;
+                weft = WEFT_RENDER_TARGET_LINEAR_RGBA32F;
+                return true;
+            default:
+                return false;
+            }
+        }
+
         // D3D11: the pass draws on Unity's immediate context while it encodes, so a recording is done with the GPU as
         // far as weft is concerned once it is recorded (the context keeps what its commands use). The pass sets the
         // state it needs and clears the context's state after; Unity's renderer keeps a copy of that state and does not
@@ -62,6 +86,53 @@ namespace weft_unity {
                     weft_render_d3d11_destroy(static_cast<weft_render_d3d11*>(slot.backend));
                     slot.backend = nullptr;
                 }
+            }
+
+            bool external(Slot& slot, weft_render_external_backend& table, std::string& why) override {
+                if (const auto result = weft_render_d3d11_external(static_cast<weft_render_d3d11*>(slot.backend), &table);
+                    result != WEFT_RENDER_OK) {
+                    why = "the D3D11 backend has no external textures: " + describe(result);
+                    return false;
+                }
+                return true;
+            }
+
+            // A shader resource view of the texture, which the backend references while it holds the texture: the
+            // immediate context orders the camera's writes before the pass's reads.
+            bool import_texture(Slot& slot, const TextureBinding& binding, Import& added, std::string& why) override {
+                auto* texture = static_cast<ID3D11Texture2D*>(binding.texture);
+                D3D11_TEXTURE2D_DESC desc{};
+                texture->GetDesc(&desc);
+                DXGI_FORMAT format{};
+                std::uint32_t weft = 0;
+                if (!texture_format(desc.Format, format, weft)) {
+                    why = "its format (" + std::to_string(int(desc.Format)) + ") is not linear RGBA16F, RGBA8 or RGBA32F";
+                    return false;
+                }
+                if (desc.SampleDesc.Count != 1 || desc.ArraySize != 1 || !(desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) ||
+                    desc.Width != binding.width || desc.Height != binding.height) {
+                    why = "it is not a single-sample 2D texture of its size that shaders read";
+                    return false;
+                }
+                D3D11_SHADER_RESOURCE_VIEW_DESC view_desc{};
+                view_desc.Format = format;
+                view_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                view_desc.Texture2D.MostDetailedMip = 0;
+                view_desc.Texture2D.MipLevels = 1;
+                ID3D11ShaderResourceView* view = nullptr;
+                if (FAILED(device_->CreateShaderResourceView(texture, &view_desc, &view))) {
+                    why = "no shader resource view of it";
+                    return false;
+                }
+                const weft_render_d3d11_texture native{sizeof(native), WEFT_RENDER_EXTERNAL_ABI_VERSION, view, 0};
+                const weft_render_external_texture description = live_texture(slot, binding, weft, &native, sizeof(native));
+                const auto result = weft_renderer_import_texture(slot.renderer, &description, &added.lease);
+                view->Release(); // the backend holds its own reference
+                if (result != WEFT_RENDER_OK) {
+                    why = "import_texture failed: " + describe(result);
+                    return false;
+                }
+                return true;
             }
 
             bool encode(Slot& slot, weft_render_handle prepared, const Draw& draw, std::string& why) override {
@@ -105,7 +176,7 @@ namespace weft_unity {
                 context->Release();
                 view->Release();
                 if (result != WEFT_RENDER_OK) {
-                    why = "encode failed: " + describe(result);
+                    why = "encode failed: " + describe(result, slot.renderer);
                     return false;
                 }
                 submit(slot, use);

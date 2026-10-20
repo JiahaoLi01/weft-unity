@@ -18,6 +18,14 @@ namespace Weft
         public string Root = string.Empty;
         /// <summary>CRPG Framework's window.ue.sendEvent, __ue_dispatch and __vm_update over weft.engine.</summary>
         public bool CrpgBridge;
+        /// <summary>
+        /// The stylesheet and keyframes taken as browsers take CSS (@media, @supports, cascade layers, nesting, more
+        /// selectors and values), what the scene cannot draw dropped with a diagnostic instead of failing the page, and
+        /// a stylesheet's bounds those of an app's (8 MiB, 16384 rules) instead of 64 KiB and 256 rules.
+        /// </summary>
+        public bool ForgivingCss;
+        /// <summary>The web platform pages written for browsers expect: console, localStorage, dataset, focus, matchMedia.</summary>
+        public bool WebPlatform;
         /// <summary>An absolute path (a file's: what follows its last '/' is no part of it); empty: url() images find nothing.</summary>
         public string Base = string.Empty;
 
@@ -35,8 +43,9 @@ namespace Weft
 
         /// <summary>
         /// The page of a folder (relative to StreamingAssets, or absolute): its page.json names the scripts, the
-        /// stylesheet and keyframes files, the root and whether the page uses the CRPG bridge; without one the folder's
-        /// page.js, page.css and keyframes.css are the page.
+        /// stylesheet and keyframes files, the root, and whether the page uses the CRPG bridge, forgiving CSS
+        /// ("forgivingCss") and the web platform ("webPlatform"); without one the folder's page.js, page.css and
+        /// keyframes.css are the page.
         /// </summary>
         public static WeftPage FromDirectory(string directory)
         {
@@ -73,6 +82,8 @@ namespace Weft
                 }
                 page.Root = manifest.root ?? string.Empty;
                 page.CrpgBridge = manifest.crpgBridge;
+                page.ForgivingCss = manifest.forgivingCss;
+                page.WebPlatform = manifest.webPlatform;
             }
             else
             {
@@ -122,6 +133,8 @@ namespace Weft
             public string keyframes = null;
             public string root = null;
             public bool crpgBridge = false;
+            public bool forgivingCss = false;
+            public bool webPlatform = false;
         }
     }
 }

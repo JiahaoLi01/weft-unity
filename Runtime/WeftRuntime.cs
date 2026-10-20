@@ -120,6 +120,27 @@ namespace Weft
             }
         }
 
+        /// <summary>
+        /// Shows a texture of the game's in the pages by name: an element whose CSS background-image is
+        /// -weft-texture(name) draws it as CSS draws a background image (background-size: 100% 100% stretches it over the
+        /// element), inside its rounded corners and under its borders, composited with the page. The texture holds
+        /// linear, premultiplied RGBA: a camera's render texture in ARGBHalf (any graphics API), or a linear RGBA8 one.
+        /// It may change every frame; render it before WeftView's LateUpdate draws the page, so that both show the same
+        /// frame. null takes the name away; bind it again after the texture is created again (a resize). Stopping the
+        /// runtime unbinds every name.
+        /// </summary>
+        public static void SetTexture(string name, Texture texture)
+        {
+            var nameBytes = Utf8(name);
+            var native = texture ? texture.GetNativeTexturePtr() : IntPtr.Zero;
+            var width = texture ? (uint)texture.width : 0;
+            var height = texture ? (uint)texture.height : 0;
+            fixed (byte* n = nameBytes)
+            {
+                Check(WeftNative.weft_unity_set_texture(n, (UIntPtr)nameBytes.Length, native, width, height), $"binding the texture {name}");
+            }
+        }
+
         public static WeftRenderStats RenderStats
         {
             get

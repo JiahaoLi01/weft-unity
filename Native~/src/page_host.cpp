@@ -2,6 +2,7 @@
 
 #include "draw_queue.hpp"
 #include "message_pack.hpp"
+#include "textures.hpp"
 #include "weft_unity.h"
 
 #include <filesystem>
@@ -58,6 +59,8 @@ namespace weft_unity {
             return;
         }
         DrawQueue::get().drop_all();
+        // The play session's textures go with it: the next one binds its own.
+        TextureTable::get().clear();
         std::vector<Kept> views;
         {
             std::lock_guard lock(lock_);

@@ -277,6 +277,56 @@ namespace Weft.Tests
         }
 
         [UnityTest]
+        public IEnumerator EngineTexturesShowUprightAndLinear()
+        {
+            var probe = new RenderTexture(8, 8, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear);
+            probe.Create();
+            var eye = new GameObject("Probe Camera").AddComponent<Camera>();
+            var grey = new Color(0.5f, 0.5f, 0.5f, 1);
+            try
+            {
+                var view = Make("document.getElementById('root').appendChild(document.createElement('div')).className = 't';",
+                    ".t{position:absolute;left:0;top:0;width:64px;height:32px;background-image:-weft-texture(probe);" +
+                    "background-size:100% 100%}");
+                // The View draws first: Unity's rendering after weft's passes is as before them.
+                yield return Frames(2);
+                // A camera's render texture, as the game's are: its top half red, its bottom half grey (viewport
+                // rects, bottom-left origin), in linear ARGBHalf.
+                eye.enabled = false;
+                eye.targetTexture = probe;
+                eye.clearFlags = CameraClearFlags.SolidColor;
+                eye.cullingMask = 0;
+                foreach (var (rect, color) in new[] {(new Rect(0, 0.5f, 1, 0.5f), Color.red), (new Rect(0, 0, 1, 0.5f), grey)})
+                {
+                    eye.rect = rect;
+                    eye.backgroundColor = color;
+                    eye.Render();
+                }
+                WeftRuntime.SetTexture("probe", probe);
+                yield return Frames(4);
+                NoDiagnostics();
+                Drawn();
+                var pixels = Read(view.Texture);
+                // The camera cleared to the colour's linear value in linear colour space; weft encodes what it reads.
+                var linear = QualitySettings.activeColorSpace == ColorSpace.Linear ? grey.linear.r : grey.r;
+                var encoded = (byte)Mathf.RoundToInt(255 * Mathf.LinearToGammaSpace(linear));
+                Near(new Color32(255, 0, 0, 255), At(pixels, Width, 16, 4), 1, "the texture's top at the page's top");
+                Near(new Color32(encoded, encoded, encoded, 255), At(pixels, Width, 16, 27), 2,
+                    "the texture's bottom at the page's bottom, its linear grey encoded");
+                WeftRuntime.SetTexture("probe", null);
+                yield return Frames(4);
+                Near(new Color32(0, 0, 0, 0), At(Read(view.Texture), Width, 16, 4), 0, "an unbound name draws nothing");
+                NoDiagnostics();
+            }
+            finally
+            {
+                Object.Destroy(eye.gameObject);
+                probe.Release();
+                Object.Destroy(probe);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator ScriptErrorsAreDiagnostics()
         {
             Make("throw new Error('kaput');", string.Empty);

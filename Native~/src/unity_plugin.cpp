@@ -89,6 +89,7 @@ namespace {
                 stats.renderer = std::uint32_t(renderer);
             }
             if (device) {
+                device->warn = [](const std::string& text) { say(kUnityLogTypeWarning, text); };
                 say(kUnityLogTypeLog, std::string("drawing with ") + api_name(renderer) + " (weft " + WEFT_UNITY_COMMIT + ")");
             } else {
                 note(false, std::string("no renderer for ") + api_name(renderer) + " (" + std::to_string(int(renderer)) + ")");

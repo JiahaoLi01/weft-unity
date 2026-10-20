@@ -11,6 +11,8 @@ namespace Weft
         public const uint AbiVersion = 1;
         public const uint RuntimeSystemFonts = 1;
         public const uint PageCrpgBridge = 1;
+        public const uint PageForgivingCss = 2;
+        public const uint PageWebPlatform = 4;
         public const uint ValueJson = 2;
         public const uint EmitLatest = 1;
 
@@ -148,6 +150,7 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_view_diagnostic(ViewHandle view, uint index, uint* kind, byte** text, UIntPtr* size);
         [DllImport(Dll)] public static extern Result weft_unity_view_pointer(ViewHandle view, PointerEvent* pointer, uint* prevented);
         [DllImport(Dll)] public static extern Result weft_unity_view_hit_test(ViewHandle view, float x, float y, Hit* hit);
+        [DllImport(Dll)] public static extern Result weft_unity_set_texture(byte* name, UIntPtr nameSize, IntPtr texture, uint width, uint height);
         [DllImport(Dll)] public static extern uint weft_unity_queue_draw(ViewHandle view, IntPtr target, uint width, uint height, float scale, uint clear);
         [DllImport(Dll)] public static extern IntPtr weft_unity_render_event();
         [DllImport(Dll)] public static extern int weft_unity_render_event_id();

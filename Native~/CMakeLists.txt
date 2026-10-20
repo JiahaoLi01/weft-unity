@@ -66,6 +66,7 @@ add_library(weft_unity SHARED
     src/message_pack.cpp
     src/page_host.cpp
     src/draw_queue.cpp
+    src/textures.cpp
     src/render_device.cpp
     src/render_d3d11.cpp
     src/render_d3d12.cpp
