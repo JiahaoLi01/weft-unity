@@ -386,6 +386,20 @@ int run_d3d11(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
     render(id);
     check(stats().draws == 1, "a draw id is taken once");
 
+    watchdog.step("Unity's context state");
+    // Unity's renderer keeps a copy of the immediate context's state and does not set again what it believes is set:
+    // a pass leaves the context's state as it found it.
+    const D3D11_VIEWPORT unity_viewport{3, 5, 40, 20, 0, 1};
+    render_thread.post([&] { context->RSSetViewports(1, &unity_viewport); });
+    render(weft_unity_queue_draw(view, target, width, height, 1, 1));
+    D3D11_VIEWPORT kept_viewport{};
+    UINT viewports = 1;
+    render_thread.post([&] { context->RSGetViewports(&viewports, &kept_viewport); });
+    check(viewports == 1 && kept_viewport.TopLeftX == 3 && kept_viewport.TopLeftY == 5 && kept_viewport.Width == 40 &&
+              kept_viewport.Height == 20,
+          "the pass leaves Unity's viewport as it was (" + std::to_string(viewports) + " viewports)");
+    render_thread.post([&] { context->ClearState(); });
+
     watchdog.step("messages");
     const std::string ping = "{\"n\":41}";
     check(weft_view_emit(weft_unity_runtime(), view, "ping", 4, WEFT_VALUE_JSON, ping.data(), ping.size(), 0) == WEFT_OK,
