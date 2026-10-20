@@ -29,7 +29,19 @@ namespace Weft
         /// <summary>Draws the texture over a screen rectangle (GUI coordinates); call it in OnGUI's repaint.</summary>
         public static void DrawOnScreen(Rect screen, Texture texture)
         {
+            // IMGUI draws with sRGB writes off in linear colour space (on Direct3D 11 and 12), so that its colours show
+            // as they are authored: the page's colours, decoded to linear, are encoded again as they are written.
+            var linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+            var encoding = GL.sRGBWrite;
+            if (linear)
+            {
+                GL.sRGBWrite = true;
+            }
             Graphics.DrawTexture(screen, texture, Material);
+            if (linear)
+            {
+                GL.sRGBWrite = encoding;
+            }
         }
 
         /// <summary>Draws the texture over what the target holds (decoded for linear colour space when decode says so).</summary>

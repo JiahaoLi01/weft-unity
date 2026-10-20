@@ -91,7 +91,7 @@ Build~/Native/Release/weft_unity_tests.exe --page Samples~/Demo/Page --click 93,
   - D3D12：`IUnityGraphicsD3D12v8` 的 `CommandRecordingState` 给出 Unity 正在录的命令列表，目标先 `RequestResourceState` 到 render target；录制在 GPU 上完成与否看 Unity 的帧 fence（`GetNextFrameFenceValue` 与 fence 的完成值）。
   - Vulkan：`IUnityGraphicsVulkanV2` 的 `AccessTexture` 把目标转到 color attachment，事件配置成在 render pass 外，录进 Unity 的命令缓冲；完成看 `safeFrameNumber`。目标的 image view 由插件做、帧安全后销毁。
 - weft 的渲染器只认创建它的线程：它在渲染线程上建。一个 weft 后端只画一个运行时的 View，所以运行时换了（新的 play）就换一个渲染器，旧的等它的录制都完成后销毁。
-- 渲染纹理是 8 位 BGRA UNORM（不能做渲染目标时用 RGBA），每帧先清空。weft 写的是 sRGB 编码、预乘、首行在上的像素：`WeftComposite` 的着色器把它翻正、预乘混合；线性色彩空间的工程里先解码成线性（半透明边缘的混合因此在线性空间里做，和浏览器略有不同）。
+- 渲染纹理是 8 位 BGRA UNORM（不能做渲染目标时用 RGBA），每帧先清空。weft 写的是 sRGB 编码、预乘、首行在上的像素：`WeftComposite` 的着色器把它翻正、预乘混合；线性色彩空间的工程里先解码成线性（半透明边缘的混合因此在线性空间里做，和浏览器略有不同）。全屏 View 在 OnGUI 里合成时打开 sRGB 写入：IMGUI 在 D3D11、D3D12 上关着它，否则解码后的颜色原样写进屏幕，整页偏暗。
 
 ## 测试
 
@@ -102,7 +102,7 @@ powershell -File Scripts~/RunTests.ps1 -NativeOnly         # 只跑原生测试�
 ```
 
 - 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
-- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时。
+- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时。
 - 测试工程由脚本生成在临时目录（`-ProjectDir`，默认 `%TEMP%/weft-unity-tests`），引用本仓库的包：路径里有 `~` 结尾的文件夹时，Unity 的测试框架找不到它自己的脚本，进入 play 后一直不开始测试。结果与日志在 `Build~/Tests/<api>.xml`、`.log`。批处理模式需要有效的 Unity 许可证。
 
 ## 限制

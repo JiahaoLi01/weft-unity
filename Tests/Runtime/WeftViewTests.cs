@@ -7,8 +7,20 @@ using UnityEngine.TestTools;
 
 namespace Weft.Tests
 {
+    // The tests' project is of linear colour space, as games are made: set before the play session starts.
+    public sealed class LinearColourSpace : IPrebuildSetup
+    {
+        public void Setup()
+        {
+#if UNITY_EDITOR
+            UnityEditor.PlayerSettings.colorSpace = ColorSpace.Linear;
+#endif
+        }
+    }
+
     // A View in a play session on the graphics API Unity runs (-force-d3d11, -force-d3d12, -force-vulkan): its pixels
     // read back from its texture, its messages, events, view models and calls, pointer input and hit tests, url() images.
+    [PrebuildSetup(typeof(LinearColourSpace))]
     public sealed class WeftViewTests
     {
         const int Width = 64;
@@ -142,6 +154,44 @@ namespace Weft.Tests
             {
                 target.Release();
                 Object.Destroy(target);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator CompositesOnScreenAsIMGUIWrites()
+        {
+            // The page over the screen as OnGUI draws it: IMGUI turns sRGB writes off in linear colour space, and the
+            // page's colours still come out as they are, not darker.
+            var view = Make("document.getElementById('root').appendChild(document.createElement('div')).className = 'a';",
+                ".a{position:absolute;left:0;top:0;width:64px;height:32px;background-color:rgb(128,128,128)}");
+            yield return Frames(4);
+            NoDiagnostics();
+            Assert.That(QualitySettings.activeColorSpace, Is.EqualTo(ColorSpace.Linear), "a project of linear colour space");
+            var screen = new RenderTexture(Width, Height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+            var copy = new Texture2D(Width, Height, TextureFormat.RGBA32, false, false);
+            try
+            {
+                var previous = RenderTexture.active;
+                RenderTexture.active = screen;
+                GL.Clear(false, true, Color.clear);
+                GL.PushMatrix();
+                GL.LoadPixelMatrix(0, Width, Height, 0);
+                var writes = GL.sRGBWrite;
+                GL.sRGBWrite = false;
+                WeftComposite.DrawOnScreen(new Rect(0, 0, Width, Height), view.Texture);
+                GL.sRGBWrite = writes;
+                GL.PopMatrix();
+                // The screen's bytes as it stores them: encoded.
+                copy.ReadPixels(new Rect(0, 0, Width, Height), 0, 0);
+                copy.Apply();
+                RenderTexture.active = previous;
+                Near(new Color32(128, 128, 128, 255), At(copy.GetPixels32(), Width, 8, 4), 2, "the page's grey on the screen");
+            }
+            finally
+            {
+                screen.Release();
+                Object.Destroy(screen);
+                Object.Destroy(copy);
             }
         }
 
