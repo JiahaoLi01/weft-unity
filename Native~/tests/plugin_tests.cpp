@@ -484,6 +484,38 @@ int run_d3d11(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
           "the key value of a physical key (weft's own, exported)");
     weft_unity_view_destroy(keys);
 
+    watchdog.step("text field and input method");
+    // The host reads where text goes (the focused text field, its caret for the candidate window), and an input method
+    // composes in it and commits.
+    auto field = make_view(float(width), float(height));
+    load(field,
+         "const t = document.getElementById('root').appendChild(document.createElement('input'));"
+         "t.focus();"
+         "for (const type of ['compositionstart', 'compositionend'])"
+         "  t.addEventListener(type, e => weft.engine.send('log', type + ':' + e.data));"
+         "t.addEventListener('input', () => weft.engine.send('log', t.value));",
+         "#root{position:relative;width:100%;height:100%}input{position:absolute;left:0;top:0;width:40px;height:10px}");
+    advance(field, 0.016);
+    weft_text_input input{sizeof(input)};
+    check(weft_unity_view_text_input(field, &input) == WEFT_OK && input.active == 1 && input.composing == 0 &&
+              input.password == 0 && input.caret_height > 0 && input.field_width == 40,
+          "the focused text field takes text");
+    const std::string ni = "\xe4\xbd\xa0";
+    std::uint32_t taken = 0;
+    check(weft_unity_view_composition(field, ni.data(), ni.size(), 3, 3, &taken) == WEFT_OK && taken == 1,
+          "the input method composes in it");
+    input = {sizeof(input)};
+    check(weft_unity_view_text_input(field, &input) == WEFT_OK && input.composing == 1, "it composes");
+    taken = 0;
+    check(weft_unity_view_commit_text(field, ni.data(), ni.size(), &taken) == WEFT_OK && taken == 1, "and commits");
+    log.clear();
+    for (const auto& [name, json] : advance(field, 0.032).messages) {
+        log += (log.empty() ? "" : ",") + json;
+    }
+    check(log == "\"compositionstart:\",\"" + ni + "\",\"" + ni + "\",\"compositionend:" + ni + "\"",
+          "the page's events: " + log);
+    weft_unity_view_destroy(field);
+
     watchdog.step("a target weft cannot draw into");
     ID3D11Texture2D* wrong = make_target(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height);
     const std::uint32_t refused = weft_unity_queue_draw(view, wrong, width, height, 1, 1);

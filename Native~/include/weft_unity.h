@@ -69,6 +69,14 @@ weft_result weft_unity_view_key(weft_view_handle view, const weft_key_event* eve
 weft_result weft_unity_view_text(weft_view_handle view, const char* text, size_t text_size, uint32_t* out_handled);
 weft_result weft_unity_view_set_focus(weft_view_handle view, uint32_t focused);
 
+/* Owner: where text input goes and an input method's composition and commit (weft_view_text_input,
+ * weft_view_composition, weft_view_commit_text). */
+weft_result weft_unity_view_text_input(weft_view_handle view, weft_text_input* out_input);
+weft_result weft_unity_view_composition(weft_view_handle view, const char* text, size_t text_size,
+                                        uint32_t selection_start, uint32_t selection_end, uint32_t* out_taken);
+weft_result weft_unity_view_commit_text(weft_view_handle view, const char* text, size_t text_size,
+                                        uint32_t* out_taken);
+
 /* ---- The engine's textures: a page's background-image: -weft-texture(name). ---- */
 
 /* Binds a name the pages show by -weft-texture(name) to a texture of Unity's (Texture.GetNativeTexturePtr: an

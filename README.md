@@ -2,7 +2,7 @@
 
 把 [weft](https://github.com/JiahaoLi01/weft)（HTML、CSS、DOM 与 JavaScript 的游戏 UI 运行时）接进 Unity 6 的包。页面在插件自己的线程上运行，帧由 weft 对应当前图形 API 的后端在 Unity 的渲染线程上画进一张渲染纹理：用的是 Unity 自己的 GPU 设备与命令列表，不经 CPU 拷贝，也不另开设备。
 
-当前状态（2026-10-22）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过，读 Input System 的工程在 Direct3D 11 上也通过（weft `input` 分支 5b017a9）。
+当前状态（2026-10-22）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过，读 Input System 的工程在 Direct3D 11 上也通过（weft `input` 分支 c5d612d）。
 
 ## 目录
 
@@ -85,8 +85,15 @@ if (Input.GetKeyDown(KeyCode.Space) && !view.KeyUsed(KeyCode.Space)) { /* 给游
 
 - 焦点：一次一个 View 有键盘焦点（`WeftView.FocusedView`），像浏览器里一个 iframe 有焦点。读键盘的 View（`Keyboard`，默认开）在鼠标按在它页面的元素上时拿到焦点，按在页面元素以外（游戏上）时还给游戏；`Focus()`、`Blur()` 由游戏给与收回。页面像浏览器窗口那样知道焦点：拿到时 window 的 focus 与焦点元素的 focus（`:focus`、`:focus-visible`、`document.hasFocus()` 只在有焦点时成立），失去时 blur；游戏窗口失去系统焦点时同样，这时按着的键算抬起（页面不收 keyup，同浏览器）。
 - 读键盘：有焦点、读键盘的 View 在每帧脚本的 `Update` 之前（PlayerLoop 的 Update 开头）收到这一帧的键：工程用 Input System 时从它的事件（`InputSystem.onEvent`：按键状态与文字按到来的顺序），否则从 Input Manager（这一帧按下的键，先不打字的键，再这一帧的文字 `Input.inputString`，再抬起的键）。code 是物理键：Input Manager 要开着 Use Physical Keys（Unity 的默认）。key 是系统键盘布局用这个键打出的字符（`WeftKeys.KeyValue`），keyCode 由 weft 按布局推出。两套输入都不给系统的自动重复，插件照 Windows 做：最后按下的键按住时，过系统的键盘延迟后按系统的速度重复（`repeat` 为真）。
-- 页面用没用：`view.KeyUsed(...)`（code、`KeyCode`，或 Input System 的 `Key`）说这一帧页面用了这个键：监听器阻止了它（`preventDefault`），或 weft 对它执行了默认动作（移了焦点、滚动、点击）。游戏跳过这样的键，同 Chrome 把页面没用的键还给浏览器。键在脚本的 `Update` 之前读，所以 `Update` 里就知道。空格在页面上滚动是由它的文字（keypress）做的，也算在空格上。
+- 页面用没用：`view.KeyUsed(...)`（code、`KeyCode`，或 Input System 的 `Key`）说这一帧页面用了这个键：监听器阻止了它（`preventDefault`），weft 对它执行了默认动作（移了焦点、滚动、点击、编辑文本框），或输入法为页面的文本框吃掉了它。游戏跳过这样的键，同 Chrome 把页面没用的键还给浏览器。键在脚本的 `Update` 之前读，所以 `Update` 里就知道。空格在页面上滚动是由它的文字（keypress）做的，也算在空格上；可编辑文本框里打字的键按下时就算页面用了（玩家在聊天框里打字时角色不动）。
 - 游戏自己给键：`Keyboard = false` 的 View 不读键盘，游戏用 `Key(...)`、`Text(...)` 给它（比如画在物体上、游戏自己判断点击的 View），用 `Focus()` 让它的页面知道有焦点。`WeftKeys.Code(KeyCode)`、Input System 的 `Key.WeftCode()` 给出 Unity 的键的 code。
+
+## 文本框与输入法
+
+- 页面的 `<input>`（文字类型）与 `<textarea>` 照 Chrome 编辑（weft 做：打字、选择、鼠标、事件）。`Pointer(...)` 带修饰键（默认取键盘按着的），Shift+点击扩展选区。
+- `view.TextInput`（`WeftTextInput`）说文字往哪里去：页面里可编辑的文本框有焦点、View 有键盘焦点时 `Active`，`Composing`（输入法正在组合）、`Password`，光标与文本框的矩形（View 的逻辑像素，左上原点）。
+- 输入法：读键盘的 View 在 `TextInput.Active` 且不是密码框时打开输入法（Input Manager 的 `Input.imeCompositionMode = On`，离开时恢复原来的；Input System 的 `Keyboard.SetIMEEnabled`），全屏 View 把候选窗放在光标下面（`Input.compositionCursorPos`、`Keyboard.SetIMECursorPosition`；画在物体上的 View 由游戏按它怎么显示纹理来放）。组合串变化时给页面（compositionstart、compositionupdate、input），上屏的文字结束组合（compositionend），不发 keypress，同 Chrome。Input Manager 从 `Input.compositionString` 读组合串，组合之后那一帧的 `Input.inputString` 是上屏的文字；Input System 从 `IMECompositionEvent` 读组合串，组合中（或组合刚结束、下一帧之前）的文字事件是上屏的文字。组合进行时按下的键（和开始组合的那个键）是输入法的：页面收到 key 为 "Process"、keyCode 229 的 keydown，`KeyUsed` 为真；按住时的重复同样。
+- 游戏自己读输入法时（`Keyboard = false`）：`Compose(text, cursor)`、`CommitText(text)`、`Key(..., ime: true)`。
 
 ## 示例
 
@@ -125,14 +132,14 @@ powershell -File Scripts~/RunTests.ps1 -Apis d3d11 -InputSystem   # 在读 Input
 ```
 
 - 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、键盘（Tab、Enter、文字、窗口焦点到页面的焦点元素）、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、引擎纹理在先后几个 View 里正着显示、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
-- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、引擎纹理（相机画的纹理在页面里正着显示、颜色按线性解码，解绑后不画，相机在 weft 画过之后照常渲染）、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时；键盘（`WeftKeyboardTests`：测试代替设备给键）：Tab 移焦点、Enter 点击、页面没用与阻止的键（`KeyUsed`、阻止的键的文字丢掉）、按下给焦点与收回、焦点在 View 间移动、按系统速度的重复、修饰键与锁定键、窗口焦点、游戏自己给的键。
-- `-InputSystem` 在另一个工程（`<ProjectDir>-input-system`）里跑：它有 Input System 包、Active Input Handling 是 Input System（脚本第一次打开工程生成设置后改好），全部测试再跑一遍，另加 `WeftInputSystemTests`（Input System 测试框架的键盘：状态事件与文字事件按顺序到页面、修饰键、`KeyUsed(Key)`、没有焦点时键归游戏）。结果在 `Build~/Tests/<api>-input-system.xml`。
+- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、引擎纹理（相机画的纹理在页面里正着显示、颜色按线性解码，解绑后不画，相机在 weft 画过之后照常渲染）、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时；键盘（`WeftKeyboardTests`：测试代替设备给键）：Tab 移焦点、Enter 点击、页面没用与阻止的键（`KeyUsed`、阻止的键的文字丢掉）、按下给焦点与收回、焦点在 View 间移动、按系统速度的重复、修饰键与锁定键、窗口焦点、游戏自己给的键；文本框与输入法：`TextInput`、打字、拼音的组合与上屏（开始组合的键在组合事件之前、组合先结束再来文字）、"Process" 键与 `KeyUsed`、密码框不开输入法（Input Manager 时查 `Input.imeCompositionMode`）、游戏自己给的组合与上屏。
+- `-InputSystem` 在另一个工程（`<ProjectDir>-input-system`）里跑：它有 Input System 包、Active Input Handling 是 Input System（脚本第一次打开工程生成设置后改好），全部测试再跑一遍，另加 `WeftInputSystemTests`（Input System 测试框架的键盘：状态事件与文字事件按顺序到页面、修饰键、`KeyUsed(Key)`、没有焦点时键归游戏；输入法：文本框有焦点时打开、候选窗在光标下面并跟着光标、`IMECompositionEvent` 的组合与上屏、焦点回到游戏时关掉）。结果在 `Build~/Tests/<api>-input-system.xml`。
 - 测试工程由脚本生成在临时目录（`-ProjectDir`，默认 `%TEMP%/weft-unity-tests`），引用本仓库的包：路径里有 `~` 结尾的文件夹时，Unity 的测试框架找不到它自己的脚本，进入 play 后一直不开始测试。结果与日志在 `Build~/Tests/<api>.xml`、`.log`。批处理模式需要有效的 Unity 许可证。
 
 ## 限制
 
 - 只有 Windows x64；macOS（Metal）、Linux、主机平台等 weft 有对应的后端。
-- 输入有鼠标（移动、按键、滚轮、离开）与键盘，来自 Input System 或旧的 Input Manager；IME、触摸与手柄还没有。右 Alt 一律是 Alt（AltGr 打出的字符照常从文字到页面，keydown 的 key 不是 AltGraph）。
+- 输入有鼠标（移动、按键、滚轮、离开）、键盘与输入法，来自 Input System 或旧的 Input Manager；触摸与手柄还没有。右 Alt 一律是 Alt（AltGr 打出的字符照常从文字到页面，keydown 的 key 不是 AltGraph）。
 - 同步函数（`weft.engine.invoke`）还没有接。
 - 页面里的图片只有 PNG 背景图（`url()`），没有 `<img>`、JPEG 与 `data:` URL。
 - 全屏 View 在 OnGUI 里合成；URP、HDRP 下同样在所有相机之后画。

@@ -285,4 +285,24 @@ weft_result weft_unity_view_text(weft_view_handle view, const char* text, size_t
 weft_result weft_unity_view_set_focus(weft_view_handle view, uint32_t focused) {
     return on_owner([&] { return running() ? weft_view_set_focus(running(), view, focused) : WEFT_STALE_HANDLE; });
 }
+
+weft_result weft_unity_view_text_input(weft_view_handle view, weft_text_input* out_input) {
+    return on_owner([&] { return running() ? weft_view_text_input(running(), view, out_input) : WEFT_STALE_HANDLE; });
+}
+
+weft_result weft_unity_view_composition(weft_view_handle view, const char* text, size_t text_size,
+                                        uint32_t selection_start, uint32_t selection_end, uint32_t* out_taken) {
+    return on_owner([&] {
+        return running() ? weft_view_composition(running(), view, text, text_size, selection_start, selection_end,
+                                                 out_taken)
+                         : WEFT_STALE_HANDLE;
+    });
+}
+
+weft_result weft_unity_view_commit_text(weft_view_handle view, const char* text, size_t text_size,
+                                        uint32_t* out_taken) {
+    return on_owner([&] {
+        return running() ? weft_view_commit_text(running(), view, text, text_size, out_taken) : WEFT_STALE_HANDLE;
+    });
+}
 }

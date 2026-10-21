@@ -17,6 +17,13 @@ namespace Weft
     // (each frame's keydowns, the keys that type nothing first, then the frame's text, then its keyups). Keys repeat as
     // Windows repeats them: the last key pressed, while it is held, after the system's keyboard delay at its rate. Without
     // such a View the keys are only followed (the modifiers held).
+    //
+    // The input method: on while the page's focused text field takes text (WeftView.TextInput; off in a password field),
+    // its candidate window below the field's caret (a full-screen View's; the game places it for a View it shows as a
+    // texture). Its composition goes to the page as it changes, the text it commits as a commit (no keypresses, as Chrome
+    // gives an input method's text), and the keys that go down while it composes as keys it took (key "Process"). The
+    // Input Manager gives the composition (Input.compositionString) and its commit (the frame's text when a composition
+    // went on), the Input System its composition events and the commit's text.
     internal static unsafe class WeftKeyboardInput
     {
         enum Kind : byte
@@ -24,13 +31,19 @@ namespace Weft
             Down,
             Up,
             Text,
+            // A UTF-16 unit of text an input method committed.
+            Commit,
+            // The input method's composition changed (the next of compositions).
+            Compose,
         }
 
-        // A key that went down or up (Value its WeftKeys index), or a UTF-16 unit of text.
+        // A key that went down or up (Value its WeftKeys index; Ime: while an input method composed), or a UTF-16 unit of
+        // text.
         struct Pending
         {
             public Kind Kind;
             public int Value;
+            public bool Ime;
         }
 
         const int Capacity = 256;
@@ -48,6 +61,21 @@ namespace Weft
         static int attached;
         static readonly char[] units = new char[Capacity];
         static readonly byte[] text = new byte[Capacity * 3];
+        // The input method: its compositions to give in order, the last read (the Input Manager's), whether one goes on
+        // or ended since the last frame (the Input System's events), whether the View turned it on (and the Input
+        // Manager's mode before), and where its candidate window was put.
+        static readonly System.Collections.Generic.Queue<string> compositions = new System.Collections.Generic.Queue<string>();
+        static string lastComposition = string.Empty;
+        static bool composing;
+#if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+        static bool committing;
+#endif
+        static bool inputMethodOn;
+        static Vector2 candidates = new Vector2(float.NaN, float.NaN);
+#if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
+        static IMECompositionMode modeBefore;
+#endif
+        static byte[] compositionBytes = new byte[64];
 
         // What the tests replace: the clock, the system's repeat delay and interval (seconds), the lock keys' state, and
         // whether the keyboard's own keys are read.
@@ -71,7 +99,7 @@ namespace Weft
 #endif
         }
 
-        // A View is disabled: the last stops the reading.
+        // A View is disabled: the last stops the reading (and gives the input method back as it was).
         internal static void Detach()
         {
             if (attached == 0 || --attached > 0)
@@ -82,6 +110,7 @@ namespace Weft
             InputSystem.onEvent -= OnEvent;
 #endif
             Release();
+            InputMethod(null);
         }
 
         // The game's window lost the system's focus: the keys held go up without keyups, as a browser's page gets none
@@ -92,28 +121,45 @@ namespace Weft
             heldCount = 0;
             repeating = -1;
             head = count = 0;
+            compositions.Clear();
+            lastComposition = string.Empty;
+            composing = false;
+#if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+            committing = false;
+#endif
         }
 
-        internal static void Enqueue(bool down, int key)
+        internal static void Enqueue(bool down, int key, bool ime = false)
         {
-            Enqueue(down ? Kind.Down : Kind.Up, key);
+            Enqueue(down ? Kind.Down : Kind.Up, key, ime);
         }
 
-        internal static void Enqueue(string typed)
+        internal static void Enqueue(string typed, bool committed = false)
         {
             foreach (var unit in typed)
             {
-                Enqueue(Kind.Text, unit);
+                Enqueue(committed ? Kind.Commit : Kind.Text, unit);
             }
         }
 
-        static void Enqueue(Kind kind, int value)
+        // The input method's composition now.
+        internal static void EnqueueComposition(string composition)
         {
             if (count == Capacity)
             {
                 return;
             }
-            pending[(head + count) % Capacity] = new Pending {Kind = kind, Value = value};
+            compositions.Enqueue(composition ?? string.Empty);
+            Enqueue(Kind.Compose, 0);
+        }
+
+        static void Enqueue(Kind kind, int value, bool ime = false)
+        {
+            if (count == Capacity)
+            {
+                return;
+            }
+            pending[(head + count) % Capacity] = new Pending {Kind = kind, Value = value, Ime = ime};
             ++count;
         }
 
@@ -131,20 +177,50 @@ namespace Weft
             while (count > 0)
             {
                 var next = pending[head];
-                if (next.Kind != Kind.Text)
+                if (next.Kind == Kind.Compose)
                 {
                     Take();
-                    Press(next.Value, next.Kind == Kind.Down);
+                    var composition = compositions.Count > 0 ? compositions.Dequeue() : string.Empty;
+                    // A composition that ends as its text comes ends with the text (as Chrome's commit), not cancelled.
+                    if (composition.Length > 0 || count == 0 || pending[head].Kind != Kind.Commit)
+                    {
+                        Compose(composition);
+                    }
+                    continue;
+                }
+                if (next.Kind != Kind.Text && next.Kind != Kind.Commit)
+                {
+                    Take();
+                    Press(next.Value, next.Kind == Kind.Down, next.Ime || next.Kind == Kind.Down && Composes());
                     continue;
                 }
                 var length = 0;
-                while (count > 0 && pending[head].Kind == Kind.Text)
+                while (count > 0 && pending[head].Kind == next.Kind)
                 {
                     units[length++] = (char)Take().Value;
                 }
-                Type(length);
+                Type(length, next.Kind == Kind.Commit);
             }
+#if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+            committing = false;
+#endif
             Repeat();
+            InputMethod(Target());
+        }
+
+        // Whether the input method's composition changes next, before another key goes down or text comes: the key that
+        // went down was the input method's (the Input System's events give a key that starts a composition before it).
+        static bool Composes()
+        {
+            for (var i = 0; i < count; ++i)
+            {
+                var next = pending[(head + i) % Capacity];
+                if (next.Kind != Kind.Up)
+                {
+                    return next.Kind == Kind.Compose;
+                }
+            }
+            return false;
         }
 
         static Pending Take()
@@ -161,7 +237,7 @@ namespace Weft
             return view && view.Keyboard ? view : null;
         }
 
-        static void Press(int key, bool down)
+        static void Press(int key, bool down, bool ime = false)
         {
             if (held[key] == down)
             {
@@ -179,10 +255,10 @@ namespace Weft
             {
                 repeating = -1;
             }
-            Target()?.KeyFromDevice(key, down, Modifiers(), false);
+            Target()?.KeyFromDevice(key, down, Modifiers(), false, ime);
         }
 
-        static void Type(int length)
+        static void Type(int length, bool committed)
         {
             var view = Target();
             if (view == null || length == 0)
@@ -192,8 +268,86 @@ namespace Weft
             var size = Encoding.UTF8.GetBytes(units, 0, length, text, 0);
             fixed (byte* t = text)
             {
-                view.TextFromDevice(t, size);
+                if (committed)
+                {
+                    view.CommitFromDevice(t, size);
+                }
+                else
+                {
+                    view.TextFromDevice(t, size);
+                }
             }
+        }
+
+        static void Compose(string composition)
+        {
+            var view = Target();
+            if (view == null)
+            {
+                return;
+            }
+            var size = Encoding.UTF8.GetByteCount(composition);
+            if (compositionBytes.Length < size)
+            {
+                compositionBytes = new byte[Math.Max(size, compositionBytes.Length * 2)];
+            }
+            Encoding.UTF8.GetBytes(composition, 0, composition.Length, compositionBytes, 0);
+            fixed (byte* t = compositionBytes)
+            {
+                view.ComposeFromDevice(t, size, size);
+            }
+        }
+
+        // The input method follows the page's focused text field: on while one takes text (not a password's), its
+        // candidate window below the field's caret when the View is full-screen (Unity's IME positions are the screen's
+        // px from its top left, as the View's).
+        static void InputMethod(WeftView view)
+        {
+            var input = view != null ? view.TextInput : default;
+            var on = input.Active && !input.Password;
+            var place = on && view.FullScreen;
+            var caret = place ? new Vector2(input.Caret.xMin, input.Caret.yMax) * view.Scale : default;
+            if (on != inputMethodOn)
+            {
+                candidates = new Vector2(float.NaN, float.NaN);
+            }
+            place &= caret != candidates;
+#if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            if (keyboard == null)
+            {
+                return;
+            }
+            if (on != inputMethodOn)
+            {
+                inputMethodOn = on;
+                keyboard.SetIMEEnabled(on);
+            }
+            if (place)
+            {
+                candidates = caret;
+                keyboard.SetIMECursorPosition(caret);
+            }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (on != inputMethodOn)
+            {
+                inputMethodOn = on;
+                if (on)
+                {
+                    modeBefore = Input.imeCompositionMode;
+                    Input.imeCompositionMode = IMECompositionMode.On;
+                }
+                else
+                {
+                    Input.imeCompositionMode = modeBefore;
+                }
+            }
+            if (place)
+            {
+                candidates = caret;
+                Input.compositionCursorPos = caret;
+            }
+#endif
         }
 
         static void Repeat()
@@ -203,10 +357,12 @@ namespace Weft
                 return;
             }
             var now = Clock();
+            // While the input method composes, it takes the repeats too.
+            var ime = composing || lastComposition.Length > 0;
             for (var n = 0; n < MostRepeats && now >= nextRepeat; ++n)
             {
                 nextRepeat += RepeatInterval;
-                Target()?.KeyFromDevice(repeating, true, Modifiers(), true);
+                Target()?.KeyFromDevice(repeating, true, Modifiers(), true, ime);
             }
             if (now >= nextRepeat)
             {
@@ -244,21 +400,31 @@ namespace Weft
         static void PollInputManager()
         {
 #if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
-            if (heldCount == 0 && !Input.anyKeyDown)
+            var composition = Input.compositionString ?? string.Empty;
+            var typed = Input.inputString;
+            if (heldCount == 0 && !Input.anyKeyDown && composition == lastComposition && string.IsNullOrEmpty(typed))
             {
                 return;
             }
+            // Keys that go down while the input method composes are its own.
+            var ime = lastComposition.Length > 0 || composition.Length > 0;
             for (var pass = 0; pass < 2; ++pass)
             {
                 for (var i = 0; i < WeftKeys.Count; ++i)
                 {
                     if (WeftKeys.TypesAt(i) == (pass == 1) && Input.GetKeyDown(WeftKeys.LegacyAt(i)))
                     {
-                        Enqueue(Kind.Down, i);
+                        Enqueue(Kind.Down, i, ime);
                     }
                 }
             }
-            Enqueue(Input.inputString);
+            // The text of a frame after a composition is what the input method committed.
+            Enqueue(typed, lastComposition.Length > 0);
+            if (composition != lastComposition && (composition.Length > 0 || string.IsNullOrEmpty(typed)))
+            {
+                EnqueueComposition(composition);
+            }
+            lastComposition = composition;
             for (var i = 0; i < WeftKeys.Count; ++i)
             {
                 if (Input.GetKeyUp(WeftKeys.LegacyAt(i)))
@@ -278,17 +444,28 @@ namespace Weft
             {
                 return;
             }
+            if (e.IsA<IMECompositionEvent>())
+            {
+                var composition = ((IMECompositionEvent*)e.data)->compositionString.ToString();
+                committing |= composing && composition.Length == 0;
+                composing = composition.Length > 0;
+                EnqueueComposition(composition);
+                return;
+            }
             if (e.IsA<TextEvent>())
             {
+                // Text while the input method composes, or after its composition ended since the last frame, is its
+                // commit.
+                var kind = composing || committing ? Kind.Commit : Kind.Text;
                 var c = TextEvent.From(e)->character;
                 if (c >= 0x10000)
                 {
-                    Enqueue(Kind.Text, 0xD800 + ((c - 0x10000) >> 10));
-                    Enqueue(Kind.Text, 0xDC00 + ((c - 0x10000) & 0x3FF));
+                    Enqueue(kind, 0xD800 + ((c - 0x10000) >> 10));
+                    Enqueue(kind, 0xDC00 + ((c - 0x10000) & 0x3FF));
                 }
                 else
                 {
-                    Enqueue(Kind.Text, c);
+                    Enqueue(kind, c);
                 }
                 return;
             }
@@ -306,7 +483,7 @@ namespace Weft
                 var control = keyboard[key];
                 if (control.ReadValueFromEvent(e, out var value) && control.IsValueConsideredPressed(value) != control.isPressed)
                 {
-                    Enqueue(control.isPressed ? Kind.Up : Kind.Down, i);
+                    Enqueue(control.isPressed ? Kind.Up : Kind.Down, i, !control.isPressed && composing);
                 }
             }
         }
@@ -388,6 +565,7 @@ namespace Weft
             attached = 0;
             Release();
             Restore();
+            inputMethodOn = false;
         }
     }
 }

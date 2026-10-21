@@ -8,8 +8,8 @@ namespace Weft.Tests
 {
     // The keyboard and the focus: the keyboard's reading (given keys by the tests in place of the devices) at the page of
     // the View with the focus, what the page used (KeyUsed), the focus a press gives and takes and the focus moving
-    // between Views, repeats at the system's rate, modifiers and lock keys, the window's focus, and the keys the game gives
-    // a View that does not read the keyboard.
+    // between Views, repeats at the system's rate, modifiers and lock keys, the window's focus, the keys the game gives
+    // a View that does not read the keyboard, and text fields with the input method.
     public sealed class WeftKeyboardTests
     {
         // Two buttons and a scroll container; the page logs its keyboard, focus and scroll events.
@@ -41,6 +41,25 @@ namespace Weft.Tests
             ".s{position:absolute;left:32px;top:0;width:32px;height:32px;overflow:auto}" +
             ".tall{height:200px}";
 
+        // A text field and a password field; the page logs their keys, compositions and input.
+        const string FieldScript =
+            "const root = document.getElementById('root');" +
+            "const log = s => weft.engine.send('log', s);" +
+            "const t = root.appendChild(document.createElement('input'));" +
+            "t.className = 't';" +
+            "const p = root.appendChild(document.createElement('input'));" +
+            "p.type = 'password';" +
+            "p.className = 'p';" +
+            "document.addEventListener('keydown', e => log('keydown:' + e.key + ':' + e.keyCode + (e.isComposing ? ':composing' : '')));" +
+            "document.addEventListener('keyup', e => log('keyup:' + e.code + (e.isComposing ? ':composing' : '')));" +
+            "for (const type of ['compositionstart', 'compositionupdate', 'compositionend'])" +
+            "  t.addEventListener(type, e => log(type + ':' + e.data));" +
+            "t.addEventListener('input', e => log('input:' + e.inputType + ':' + t.value));";
+
+        const string FieldCss =
+            "#root{position:relative;width:100%;height:100%;margin:0}" +
+            "input{position:absolute;left:0;width:100px;height:20px;box-sizing:border-box}.t{top:0}.p{top:30px}";
+
         readonly List<GameObject> hosts = new List<GameObject>();
         readonly Dictionary<WeftView, List<string>> logs = new Dictionary<WeftView, List<string>>();
         double clock;
@@ -66,14 +85,14 @@ namespace Weft.Tests
             WeftKeyboardInput.Restore();
         }
 
-        WeftView Make(bool keyboard = true)
+        WeftView Make(bool keyboard = true, string script = Script, string css = Css, int width = 64, int height = 32)
         {
             var host = new GameObject("Weft View");
             host.SetActive(false);
             hosts.Add(host);
             var view = host.AddComponent<WeftView>();
             view.FullScreen = false;
-            view.Size = new Vector2Int(64, 32);
+            view.Size = new Vector2Int(width, height);
             view.Keyboard = keyboard;
             var log = new List<string>();
             logs[view] = log;
@@ -85,7 +104,7 @@ namespace Weft.Tests
                 }
             };
             view.DiagnosticReceived += d => Assert.Fail($"{d.Kind}: {d.Text}");
-            var page = WeftPage.FromSource(Script, Css);
+            var page = WeftPage.FromSource(script, css);
             page.ForgivingCss = true;
             view.Load(page);
             host.SetActive(true);
@@ -100,9 +119,9 @@ namespace Weft.Tests
             return log;
         }
 
-        static void Down(string code)
+        static void Down(string code, bool ime = false)
         {
-            WeftKeyboardInput.Enqueue(true, WeftKeys.IndexOf(code));
+            WeftKeyboardInput.Enqueue(true, WeftKeys.IndexOf(code), ime);
         }
 
         static void Up(string code)
@@ -348,6 +367,95 @@ namespace Weft.Tests
             {
                 "click:b1", "window:focus", "focus:b1", "keydown:Tab:Tab", "blur:b1", "focus:b2", "keyup:Tab", "keydown:KeyX:x",
                 "keypress:x", "keyup:KeyX", "keydown:KeyW:w", "keyup:KeyW",
+            }));
+        }
+
+        [UnityTest]
+        public IEnumerator TextFieldsAndTheInputMethod()
+        {
+#if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
+            var modeBefore = Input.imeCompositionMode;
+#endif
+            var view = Make(script: FieldScript, css: FieldCss, width: 128, height: 64);
+            yield return Frames(2);
+            Assert.That(view.TextInput.Active, Is.False, "no text field has the focus");
+            Press(view, new Vector2(10, 10));
+            yield return null;
+            var input = view.TextInput;
+            Assert.That(input.Active, "the text field has the focus");
+            Assert.That(input.Composing || input.Password, Is.False);
+            Assert.That(input.Field, Is.EqualTo(new Rect(0, 0, 100, 20)));
+            Assert.That(input.Caret.height, Is.GreaterThan(0));
+            Assert.That(input.Field.Contains(input.Caret.min) && input.Field.Contains(input.Caret.max), $"{input.Caret} in {input.Field}");
+#if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
+            Assert.That(Input.imeCompositionMode, Is.EqualTo(IMECompositionMode.On), "the input method is on for the text field");
+#endif
+            var a = WeftKeys.KeyValue("KeyA");
+            Press("KeyA", a);
+            yield return null;
+            Assert.That(view.KeyUsed("KeyA"), "the text field took the key's text");
+            // Pinyin: "n" starts a composition (the key that starts it comes before it, as the Input System gives it), "i"
+            // goes on, Space commits 你 (the composition ends before its text comes, as the Input System may give it).
+            Down("KeyN");
+            WeftKeyboardInput.EnqueueComposition("n");
+            Up("KeyN");
+            yield return null;
+            Assert.That(view.TextInput.Composing);
+            Assert.That(view.KeyUsed("KeyN"), "the input method took the key");
+            Down("KeyI", ime: true);
+            WeftKeyboardInput.EnqueueComposition("ni");
+            Up("KeyI");
+            yield return null;
+            Down("Space", ime: true);
+            WeftKeyboardInput.EnqueueComposition(string.Empty);
+            WeftKeyboardInput.Enqueue("\u4f60", committed: true);
+            Up("Space");
+            yield return null;
+            Assert.That(view.TextInput.Composing, Is.False);
+            Assert.That(view.KeyUsed("Space"), "the input method took Space");
+            Assert.That(Log(view), Is.EqualTo(new[]
+            {
+                $"keydown:{a}:65", $"input:insertText:{a}", "keyup:KeyA",
+                "keydown:Process:229", "compositionstart:", "compositionupdate:n", $"input:insertCompositionText:{a}n",
+                "keyup:KeyN:composing",
+                "keydown:Process:229:composing", "compositionupdate:ni", $"input:insertCompositionText:{a}ni", "keyup:KeyI:composing",
+                "keydown:Process:229:composing", "compositionupdate:\u4f60", $"input:insertCompositionText:{a}\u4f60",
+                "compositionend:\u4f60", "keyup:Space",
+            }));
+            // A password field takes text without the input method, as Chrome's.
+            Press(view, new Vector2(10, 40));
+            yield return null;
+            Assert.That(view.TextInput.Active && view.TextInput.Password);
+#if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
+            Assert.That(Input.imeCompositionMode, Is.EqualTo(modeBefore), "the input method is as it was");
+#endif
+            Press(view, new Vector2(120, 60));
+            yield return null;
+            Assert.That(view.TextInput.Active, Is.False, "the game has the keyboard");
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameGivesATextFieldItsInputMethod()
+        {
+            var view = Make(keyboard: false, script: FieldScript, css: FieldCss, width: 128, height: 64);
+            yield return Frames(2);
+            Assert.That(view.Compose("x"), Is.False, "no text field has the focus");
+            view.Focus();
+            Press(view, new Vector2(10, 10));
+            yield return null;
+            Assert.That(view.Key(WeftKeyKind.Down, "KeyN", ime: true), Is.EqualTo(WeftInputResult.None));
+            Assert.That(view.KeyUsed("KeyN"), "the input method took it");
+            Assert.That(view.Compose("\u4f60\u597d", 1), "the text field took the composition");
+            view.Key(WeftKeyKind.Up, "KeyN");
+            Assert.That(view.TextInput.Composing);
+            Assert.That(view.CommitText("\u4f60\u597d"));
+            Assert.That(view.CommitText("!"), "text without a composition");
+            yield return null;
+            Assert.That(Log(view), Is.EqualTo(new[]
+            {
+                "keydown:Process:229", "compositionstart:", "compositionupdate:\u4f60\u597d", "input:insertCompositionText:\u4f60\u597d",
+                "keyup:KeyN:composing", "compositionupdate:\u4f60\u597d", "input:insertCompositionText:\u4f60\u597d",
+                "compositionend:\u4f60\u597d", "input:insertText:\u4f60\u597d!",
             }));
         }
     }

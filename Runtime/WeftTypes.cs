@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using UnityEngine;
 
 namespace Weft
 {
@@ -135,6 +136,30 @@ namespace Weft
         Prevented = 1,
         /// <summary>weft acted on it, or began to: it moved the focus, scrolled, clicked, or made a button :active.</summary>
         Default = 2,
+    }
+
+    /// <summary>
+    /// Where text input goes (<see cref="WeftView.TextInput"/>): whether a text field the user may edit (an input of a text
+    /// type, a textarea) has the page's focus while the View has the keyboard, whether an input method composes in it,
+    /// whether it is a password field (where Chrome keeps input methods off), and its caret and border box in the View's
+    /// logical px (top-left origin): an input method's candidate window goes below the caret.
+    /// </summary>
+    public readonly struct WeftTextInput
+    {
+        public readonly bool Active;
+        public readonly bool Composing;
+        public readonly bool Password;
+        public readonly Rect Caret;
+        public readonly Rect Field;
+
+        public WeftTextInput(bool active, bool composing, bool password, Rect caret, Rect field)
+        {
+            Active = active;
+            Composing = composing;
+            Password = password;
+            Caret = caret;
+            Field = field;
+        }
     }
 
     /// <summary>What is under a point of the View.</summary>

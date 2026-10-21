@@ -287,8 +287,12 @@ namespace Weft
             }
         }
 
-        /// <summary>A pointer event at a point in the View's logical px; true when a listener prevented its default action.</summary>
-        public bool Pointer(WeftPointerKind kind, Vector2 position, WeftButtons buttons = WeftButtons.None, Vector2 wheel = default)
+        /// <summary>
+        /// A pointer event at a point in the View's logical px; true when a listener prevented its default action. The
+        /// modifiers held (Shift extends a text field's selection to a press) are the keyboard's unless given.
+        /// </summary>
+        public bool Pointer(WeftPointerKind kind, Vector2 position, WeftButtons buttons = WeftButtons.None, Vector2 wheel = default,
+            WeftModifiers? modifiers = null)
         {
             if (!created)
             {
@@ -313,12 +317,89 @@ namespace Weft
                 X = position.x,
                 Y = position.y,
                 Buttons = (uint)buttons,
+                Modifiers = (uint)((modifiers ?? WeftKeyboardInput.Modifiers()) &
+                                   (WeftModifiers.Shift | WeftModifiers.Control | WeftModifiers.Alt | WeftModifiers.Meta)),
                 WheelX = wheel.x,
                 WheelY = wheel.y,
             };
             uint prevented = 0;
             WeftNative.weft_unity_view_pointer(view, &e, &prevented);
             return prevented != 0;
+        }
+
+        /// <summary>
+        /// Where text input goes now: the page's focused text field, while the View has the keyboard. The View turns the
+        /// input method on and off and places its candidate window by it for the keys it reads (Keyboard on).
+        /// </summary>
+        public WeftTextInput TextInput
+        {
+            get
+            {
+                if (!created)
+                {
+                    return default;
+                }
+                var input = new WeftNative.TextInput {StructSize = (uint)sizeof(WeftNative.TextInput)};
+                if (WeftNative.weft_unity_view_text_input(view, &input) != WeftNative.Result.Ok)
+                {
+                    return default;
+                }
+                return new WeftTextInput(input.Active != 0, input.Composing != 0, input.Password != 0,
+                    new Rect(input.CaretX, input.CaretY, input.CaretWidth, input.CaretHeight),
+                    new Rect(input.FieldX, input.FieldY, input.FieldWidth, input.FieldHeight));
+            }
+        }
+
+        /// <summary>
+        /// An input method's composition at the page's focused text field, as Chrome takes one (compositionstart,
+        /// compositionupdate, beforeinput, input): text replaces the composition (or, as one starts, the selection), the
+        /// caret at cursor (a UTF-16 index in text; its end when negative). Empty text cancels the composition. Whether a
+        /// text field the user may edit took it. For an input method the game reads itself (Keyboard off).
+        /// </summary>
+        public bool Compose(string text, int cursor = -1)
+        {
+            if (!created)
+            {
+                return false;
+            }
+            text ??= string.Empty;
+            var length = WeftRuntime.Utf8(text, ref valueBuffer);
+            var at = cursor < 0 || cursor >= text.Length ? length : System.Text.Encoding.UTF8.GetByteCount(text.Substring(0, cursor));
+            fixed (byte* t = valueBuffer)
+            {
+                return ComposeFromDevice(t, length, at);
+            }
+        }
+
+        /// <summary>
+        /// An input method commits text at the page's focused text field: the composition ends with it; without one it
+        /// goes in as typed text does, without keys. Whether a text field the user may edit took it.
+        /// </summary>
+        public bool CommitText(string text)
+        {
+            if (!created || string.IsNullOrEmpty(text))
+            {
+                return false;
+            }
+            var length = WeftRuntime.Utf8(text, ref valueBuffer);
+            fixed (byte* t = valueBuffer)
+            {
+                return CommitFromDevice(t, length);
+            }
+        }
+
+        internal bool ComposeFromDevice(byte* text, int size, int cursor)
+        {
+            uint taken = 0;
+            return created && WeftNative.weft_unity_view_composition(view, text, (UIntPtr)size, (uint)cursor, (uint)cursor, &taken) ==
+                WeftNative.Result.Ok && taken != 0;
+        }
+
+        internal bool CommitFromDevice(byte* text, int size)
+        {
+            uint taken = 0;
+            return created && WeftNative.weft_unity_view_commit_text(view, text, (UIntPtr)size, &taken) == WeftNative.Result.Ok &&
+                   taken != 0;
         }
 
         /// <summary>Gives the View the keyboard focus (and takes it from the View that had it).</summary>
@@ -351,11 +432,12 @@ namespace Weft
         /// A key going down (or repeating) or up at the page's focused element (the body without one), with Chrome's
         /// default actions: Tab moves the focus, Enter and Space press buttons, the arrow and page keys scroll. code is
         /// KeyboardEvent.code ("KeyA", "Enter"; WeftKeys.Code and the Input System's Key.WeftCode give Unity's keys'),
-        /// key its value, by default what the system's layout types with it (<see cref="WeftKeys.KeyValue"/>). For keys
-        /// the game gives the View itself (Keyboard off).
+        /// key its value, by default what the system's layout types with it (<see cref="WeftKeys.KeyValue"/>); ime: a key
+        /// an input method took (it goes down as "Process", keyCode 229, with no default action). For keys the game gives
+        /// the View itself (Keyboard off).
         /// </summary>
         public WeftInputResult Key(WeftKeyKind kind, string code, string key = null, WeftModifiers modifiers = WeftModifiers.None,
-            bool repeat = false)
+            bool repeat = false, bool ime = false)
         {
             if (!created || string.IsNullOrEmpty(code))
             {
@@ -367,7 +449,7 @@ namespace Weft
             fixed (byte* c = nameBuffer)
             fixed (byte* k = valueBuffer)
             {
-                result = SendKey(kind == WeftKeyKind.Down, k, keyLength, c, codeLength, modifiers, repeat);
+                result = SendKey(kind == WeftKeyKind.Down, k, keyLength, c, codeLength, modifiers, repeat, ime);
             }
             var index = WeftKeys.IndexOf(code);
             if (kind == WeftKeyKind.Down)
@@ -375,7 +457,7 @@ namespace Weft
                 lastDown = index;
                 lastDownCode = index < 0 ? code : null;
             }
-            if (result != WeftInputResult.None)
+            if (result != WeftInputResult.None || kind == WeftKeyKind.Down && ime)
             {
                 Used(index, code);
             }
@@ -400,9 +482,10 @@ namespace Weft
         }
 
         /// <summary>
-        /// Whether the page used the key this frame: a listener prevented its keydown, keyup or text, or weft acted on it
-        /// (moved the focus, scrolled, clicked). The game leaves such a key alone, as Chrome keeps the keys a page used from
-        /// the browser. The View reads the keyboard before the scripts' Update, so it is known there.
+        /// Whether the page used the key this frame: a listener prevented its keydown, keyup or text, weft acted on it
+        /// (moved the focus, scrolled, clicked, edited a text field) or the input method took it for the page's text field.
+        /// The game leaves such a key alone, as Chrome keeps the keys a page used from the browser. The View reads the
+        /// keyboard before the scripts' Update, so it is known there.
         /// </summary>
         public bool KeyUsed(string code)
         {
@@ -423,7 +506,7 @@ namespace Weft
         }
 
         // A key of the keyboard's (WeftKeys' index) for the focused View: its value as the system's layout gives it.
-        internal void KeyFromDevice(int index, bool down, WeftModifiers modifiers, bool repeat)
+        internal void KeyFromDevice(int index, bool down, WeftModifiers modifiers, bool repeat, bool ime = false)
         {
             if (!created)
             {
@@ -449,14 +532,15 @@ namespace Weft
                         key[keyLength++] = b;
                     }
                 }
-                result = SendKey(down, key, keyLength, c, code.Length, modifiers, repeat);
+                result = SendKey(down, key, keyLength, c, code.Length, modifiers, repeat, ime);
             }
             if (down)
             {
                 lastDown = index;
                 lastDownCode = null;
             }
-            if (result != WeftInputResult.None)
+            // A key the input method took (for the page's text field) is the page's too.
+            if (result != WeftInputResult.None || down && ime)
             {
                 Used(index, null);
             }
@@ -481,7 +565,8 @@ namespace Weft
 
         static readonly byte[] unidentified = System.Text.Encoding.ASCII.GetBytes("Unidentified");
 
-        WeftInputResult SendKey(bool down, byte* key, int keyLength, byte* code, int codeLength, WeftModifiers modifiers, bool repeat)
+        WeftInputResult SendKey(bool down, byte* key, int keyLength, byte* code, int codeLength, WeftModifiers modifiers, bool repeat,
+            bool ime = false)
         {
             var e = new WeftNative.KeyEvent
             {
@@ -492,7 +577,7 @@ namespace Weft
                 Code = code,
                 CodeSize = (UIntPtr)codeLength,
                 Modifiers = (uint)modifiers,
-                Flags = down && repeat ? WeftNative.KeyRepeat : 0,
+                Flags = (down && repeat ? WeftNative.KeyRepeat : 0) | (ime ? WeftNative.KeyIme : 0),
             };
             uint handled = 0;
             return WeftNative.weft_unity_view_key(view, &e, &handled) == WeftNative.Result.Ok ? (WeftInputResult)handled : WeftInputResult.None;

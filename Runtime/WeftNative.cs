@@ -16,6 +16,7 @@ namespace Weft
         public const uint ValueJson = 2;
         public const uint EmitLatest = 1;
         public const uint KeyRepeat = 1;
+        public const uint KeyIme = 2;
 
         public enum Result
         {
@@ -100,9 +101,26 @@ namespace Weft
             public float X;
             public float Y;
             public uint Buttons;
-            public uint Reserved;
+            public uint Modifiers;
             public float WheelX;
             public float WheelY;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TextInput
+        {
+            public uint StructSize;
+            public uint Active;
+            public uint Composing;
+            public uint Password;
+            public float CaretX;
+            public float CaretY;
+            public float CaretWidth;
+            public float CaretHeight;
+            public float FieldX;
+            public float FieldY;
+            public float FieldWidth;
+            public float FieldHeight;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -169,6 +187,9 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_view_key(ViewHandle view, KeyEvent* key, uint* handled);
         [DllImport(Dll)] public static extern Result weft_unity_view_text(ViewHandle view, byte* text, UIntPtr textSize, uint* handled);
         [DllImport(Dll)] public static extern Result weft_unity_view_set_focus(ViewHandle view, uint focused);
+        [DllImport(Dll)] public static extern Result weft_unity_view_text_input(ViewHandle view, TextInput* input);
+        [DllImport(Dll)] public static extern Result weft_unity_view_composition(ViewHandle view, byte* text, UIntPtr textSize, uint selectionStart, uint selectionEnd, uint* taken);
+        [DllImport(Dll)] public static extern Result weft_unity_view_commit_text(ViewHandle view, byte* text, UIntPtr textSize, uint* taken);
         [DllImport(Dll)] public static extern Result weft_unity_set_texture(byte* name, UIntPtr nameSize, IntPtr texture, uint width, uint height);
         [DllImport(Dll)] public static extern uint weft_unity_queue_draw(ViewHandle view, IntPtr target, uint width, uint height, float scale, uint clear);
         [DllImport(Dll)] public static extern IntPtr weft_unity_render_event();
