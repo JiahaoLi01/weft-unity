@@ -2,7 +2,7 @@
 
 把 [weft](https://github.com/JiahaoLi01/weft)（HTML、CSS、DOM 与 JavaScript 的游戏 UI 运行时）接进 Unity 6 的包。页面在插件自己的线程上运行，帧由 weft 对应当前图形 API 的后端在 Unity 的渲染线程上画进一张渲染纹理：用的是 Unity 自己的 GPU 设备与命令列表，不经 CPU 拷贝，也不另开设备。
 
-当前状态（2026-10-21）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过（weft `weft-op` 分支 5975d26）。
+当前状态（2026-10-22）：实验版。Windows x64、Unity 6000.0；Direct3D 11、Direct3D 12、Vulkan 三个后端，在 Unity 6000.0.24f1 上三个 API 的测试都通过，读 Input System 的工程在 Direct3D 11 上也通过（weft `input` 分支 5b017a9）。
 
 ## 目录
 
@@ -13,6 +13,7 @@
 | `Scripts~/BuildWeft.ps1` | 用一份 weft 签出与 Unity 的插件头文件编译 DLL，放进 `Runtime/Plugins/x86_64`（连同导入它的 `.meta`，都不入库） |
 | `Runtime/` | 运行时程序集 `Weft.Runtime`（命名空间 `Weft`；不叫 `Weft`，免得 `Weft.dll` 与原生的 `weft.dll` 同名）：`WeftRuntime`、`WeftView`、`WeftPage`、合成着色器 |
 | `Tests/Runtime/` | PlayMode 测试（程序集 `Weft.Tests`） |
+| `Tests/InputSystem/` | 读 Input System 的 PlayMode 测试（程序集 `Weft.Tests.InputSystem`，工程里有 Input System 包且启用它时才编译） |
 | `Samples~/Demo` | 示例：手动试的全屏页面（Package Manager 里导入，菜单 Weft → 打开演示） |
 | `Native~/tests/` | 原生测试：用替身 Unity 接口在 D3D11 设备上驱动 `weft.dll`，不需要 Unity |
 | `Scripts~/RunTests.ps1` | 先跑原生测试，再在批处理模式下逐个图形 API 跑 PlayMode 测试（测试工程由脚本生成） |
@@ -64,6 +65,11 @@ WeftRuntime.SetTexture("minimap", minimapTexture);   // 线性、预乘的 RGBA�
 
 // 游戏判断点击归谁
 if (!view.PointerOverPage) { /* 给游戏 */ }
+
+// 键盘：按在页面的元素上时 View 拿到键盘焦点（或者 Focus()），按键给页面的焦点元素，Tab、Enter、空格、方向键照 Chrome；
+// 页面没用的键归游戏
+view.Focus();
+if (Input.GetKeyDown(KeyCode.Space) && !view.KeyUsed(KeyCode.Space)) { /* 给游戏 */ }
 ```
 
 - 页面目录相对 `Application.streamingAssetsPath`（也可以给绝对路径），所以页面放在 `Assets/StreamingAssets/` 下，打包时原样带上。`WeftPage.FromSource(script, css)` 从字符串做页面。
@@ -72,7 +78,15 @@ if (!view.PointerOverPage) { /* 给游戏 */ }
 - 不是全屏的 View（`FullScreen = false`、`Size`）只画进 `view.Texture`，由游戏去显示（`RawImage` 或材质，用 `WeftComposite.Material`），指针事件由游戏用 `view.Pointer(...)` 给它，命中用 `view.HitTest(...)`。
 - 字体：默认是 Windows 的系统字体。要加字体文件，在第一个页面载入之前：`WeftRuntime.Start(); WeftRuntime.AddFont("Noto Serif SC", path, 400);`（比如 `[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]` 里）。
 - 一次运行（play）一个 weft 运行时：退出 play、域重载、退出游戏时停掉，下一次 play 从新的运行时开始（关掉域重载时也一样）。
+- 键盘见下一节。
 - 引擎纹理：`SetTexture` 绑的是纹理本身（GPU 上直接采样，不经 CPU），每帧画进去的新内容页面都看得到。要在 WeftView 的 `LateUpdate` 排进页面的绘制之前画好它：相机设成不自动渲染、在执行顺序早于 WeftView 的脚本的 `LateUpdate` 里 `Camera.Render()`，这样页面、纹理与锚点是同一帧的。纹理是 Unity 的（首行在下），weft 把它翻正；重建了纹理（改大小）就再绑一次，传 `null` 解绑，停掉运行时会解绑全部名字。支持的格式：RGBA16F、RGBA8（线性）、RGBA32F。
+
+## 键盘
+
+- 焦点：一次一个 View 有键盘焦点（`WeftView.FocusedView`），像浏览器里一个 iframe 有焦点。读键盘的 View（`Keyboard`，默认开）在鼠标按在它页面的元素上时拿到焦点，按在页面元素以外（游戏上）时还给游戏；`Focus()`、`Blur()` 由游戏给与收回。页面像浏览器窗口那样知道焦点：拿到时 window 的 focus 与焦点元素的 focus（`:focus`、`:focus-visible`、`document.hasFocus()` 只在有焦点时成立），失去时 blur；游戏窗口失去系统焦点时同样，这时按着的键算抬起（页面不收 keyup，同浏览器）。
+- 读键盘：有焦点、读键盘的 View 在每帧脚本的 `Update` 之前（PlayerLoop 的 Update 开头）收到这一帧的键：工程用 Input System 时从它的事件（`InputSystem.onEvent`：按键状态与文字按到来的顺序），否则从 Input Manager（这一帧按下的键，先不打字的键，再这一帧的文字 `Input.inputString`，再抬起的键）。code 是物理键：Input Manager 要开着 Use Physical Keys（Unity 的默认）。key 是系统键盘布局用这个键打出的字符（`WeftKeys.KeyValue`），keyCode 由 weft 按布局推出。两套输入都不给系统的自动重复，插件照 Windows 做：最后按下的键按住时，过系统的键盘延迟后按系统的速度重复（`repeat` 为真）。
+- 页面用没用：`view.KeyUsed(...)`（code、`KeyCode`，或 Input System 的 `Key`）说这一帧页面用了这个键：监听器阻止了它（`preventDefault`），或 weft 对它执行了默认动作（移了焦点、滚动、点击）。游戏跳过这样的键，同 Chrome 把页面没用的键还给浏览器。键在脚本的 `Update` 之前读，所以 `Update` 里就知道。空格在页面上滚动是由它的文字（keypress）做的，也算在空格上。
+- 游戏自己给键：`Keyboard = false` 的 View 不读键盘，游戏用 `Key(...)`、`Text(...)` 给它（比如画在物体上、游戏自己判断点击的 View），用 `Focus()` 让它的页面知道有焦点。`WeftKeys.Code(KeyCode)`、Input System 的 `Key.WeftCode()` 给出 Unity 的键的 code。
 
 ## 示例
 
@@ -94,7 +108,7 @@ Build~/Native/Release/weft_unity_tests.exe --page Samples~/Demo/Page --click 93,
 ## 线程与渲染
 
 - weft 的页面要 8 MiB 以上的栈（React、D3），Unity 主线程只有 1 MiB：插件开一个 16 MiB 栈的线程（owner 线程）跑运行时，`weft_unity_*` 里要 owner 的函数把工作交给它并等它做完。事件、视图模型、调用的完成与锚点是 weft 的"任意线程"函数，直接调。
-- 每帧：`Update` 里送指针、推进页面、分发消息；`LateUpdate` 把 View 最新的帧排进绘制队列（`weft_unity_queue_draw`，返回绘制号），再用 `CommandBuffer.IssuePluginEventAndData` 把绘制号交给渲染线程的插件事件。每帧调的不分配托管内存：`Emit`、`SetModel`、`CompleteCall` 把字符串编码进 View 自己的缓冲（够大之后不再分配），命中测试的光标名字节不变就是上一次的字符串。渲染线程按 Unity 的图形 API 用一个 `RenderDevice`：
+- 每帧：`Update` 开头（脚本的 `Update` 之前）把键盘给有焦点的 View；`Update` 里送指针、推进页面、分发消息；`LateUpdate` 把 View 最新的帧排进绘制队列（`weft_unity_queue_draw`，返回绘制号），再用 `CommandBuffer.IssuePluginEventAndData` 把绘制号交给渲染线程的插件事件。每帧调的不分配托管内存：`Emit`、`SetModel`、`CompleteCall` 把字符串编码进 View 自己的缓冲（够大之后不再分配），命中测试的光标名字节不变就是上一次的字符串。渲染线程按 Unity 的图形 API 用一个 `RenderDevice`：
   - D3D11：weft 的 D3D11 后端在 Unity 的即时上下文上画（目标的 RTV 用 UNORM 格式现做），用的是插件自己的上下文状态（`SwapDeviceContextState`），画完换回 Unity 的：Unity 缓存着即时上下文的状态，不会重新设置它以为已经设好的视口、着色器与资源。
   - D3D12：`IUnityGraphicsD3D12v8` 的 `CommandRecordingState` 给出 Unity 正在录的命令列表，目标先 `RequestResourceState` 到 render target；录制在 GPU 上完成与否看 Unity 的帧 fence（`GetNextFrameFenceValue` 与 fence 的完成值）。
   - Vulkan：`IUnityGraphicsVulkanV2` 的 `AccessTexture` 把目标转到 color attachment，事件配置成在 render pass 外，录进 Unity 的命令缓冲；完成看 `safeFrameNumber`。目标的 image view 由插件做、帧安全后销毁。
@@ -107,16 +121,18 @@ Build~/Native/Release/weft_unity_tests.exe --page Samples~/Demo/Page --click 93,
 powershell -File Scripts~/RunTests.ps1                     # 原生测试，再在 d3d11、d3d12、vulkan 上各跑一遍 PlayMode 测试
 powershell -File Scripts~/RunTests.ps1 -Apis d3d12
 powershell -File Scripts~/RunTests.ps1 -NativeOnly         # 只跑原生测试，不需要 Unity
+powershell -File Scripts~/RunTests.ps1 -Apis d3d11 -InputSystem   # 在读 Input System 的工程里跑 PlayMode 测试
 ```
 
-- 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、引擎纹理在先后几个 View 里正着显示、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
-- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、引擎纹理（相机画的纹理在页面里正着显示、颜色按线性解码，解绑后不画，相机在 weft 画过之后照常渲染）、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时。
+- 原生测试（`Native~/tests/plugin_tests.cpp`，`BuildWeft.ps1` 一起编）用替身的 Unity 接口在真实的 D3D11、D3D12 设备上驱动 `weft.dll`：Unity 的渲染线程、D3D12 的帧（命令列表、帧 fence、`RequestResourceState` 的状态跟踪）都由测试自己扮演。查画出来的像素、消息往返、指针与命中、键盘（Tab、Enter、文字、窗口焦点到页面的焦点元素）、画不进的目标（记一次失败，不崩溃）、D3D11 的绘制之后 Unity 的视口不变、引擎纹理在先后几个 View 里正着显示、停掉再起的运行时（换一个渲染器，旧的等录制完成后销毁）。装了 Windows 的 Graphics Tools 时打开 D3D11/D3D12 调试层，调试层报的错误算失败。每一步有时限，卡住时报出卡在哪一步。
+- PlayMode 测试（`Tests/Runtime`）在批处理模式的 Unity 里跑，每个图形 API 一遍（`-force-d3d11`、`-force-d3d12`、`-force-vulkan`），工程是线性色彩空间（`PrebuildSetup` 进入 play 之前设好）。测试画一个页面并读回像素（位置、清空、首行在上）、合成后的方向与线性解码、像 OnGUI 那样关着 sRGB 写入合成到屏幕、引擎纹理（相机画的纹理在页面里正着显示、颜色按线性解码，解绑后不画，相机在 weft 画过之后照常渲染）、事件/视图模型/调用的往返、指针点击与命中、`url()` 图片与缺图诊断、脚本异常、全屏 View 跟随屏幕大小、停掉再起的运行时；键盘（`WeftKeyboardTests`：测试代替设备给键）：Tab 移焦点、Enter 点击、页面没用与阻止的键（`KeyUsed`、阻止的键的文字丢掉）、按下给焦点与收回、焦点在 View 间移动、按系统速度的重复、修饰键与锁定键、窗口焦点、游戏自己给的键。
+- `-InputSystem` 在另一个工程（`<ProjectDir>-input-system`）里跑：它有 Input System 包、Active Input Handling 是 Input System（脚本第一次打开工程生成设置后改好），全部测试再跑一遍，另加 `WeftInputSystemTests`（Input System 测试框架的键盘：状态事件与文字事件按顺序到页面、修饰键、`KeyUsed(Key)`、没有焦点时键归游戏）。结果在 `Build~/Tests/<api>-input-system.xml`。
 - 测试工程由脚本生成在临时目录（`-ProjectDir`，默认 `%TEMP%/weft-unity-tests`），引用本仓库的包：路径里有 `~` 结尾的文件夹时，Unity 的测试框架找不到它自己的脚本，进入 play 后一直不开始测试。结果与日志在 `Build~/Tests/<api>.xml`、`.log`。批处理模式需要有效的 Unity 许可证。
 
 ## 限制
 
 - 只有 Windows x64；macOS（Metal）、Linux、主机平台等 weft 有对应的后端。
-- 输入只有鼠标（移动、按键、滚轮、离开），来自 Input System 或旧的 Input Manager；键盘、IME、触摸与手柄还没有。
+- 输入有鼠标（移动、按键、滚轮、离开）与键盘，来自 Input System 或旧的 Input Manager；IME、触摸与手柄还没有。右 Alt 一律是 Alt（AltGr 打出的字符照常从文字到页面，keydown 的 key 不是 AltGraph）。
 - 同步函数（`weft.engine.invoke`）还没有接。
 - 页面里的图片只有 PNG 背景图（`url()`），没有 `<img>`、JPEG 与 `data:` URL。
 - 全屏 View 在 OnGUI 里合成；URP、HDRP 下同样在所有相机之后画。

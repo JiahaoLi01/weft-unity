@@ -9,10 +9,16 @@ Unity editor (-batchmode -runTests -force-<api>) on a test project the script ma
 repository and tests it (testables). The project lies outside the repository, by default in the user's temp folder:
 Unity's test framework loses its own scripts in a project whose path has a folder ending in '~' (as the package's
 hidden folders do). Its Library stays there between runs. Results and logs go to Build~/Tests/<api>.xml and .log.
+The project reads input from the Input Manager; with -InputSystem the tests run in a second project
+(<ProjectDir>-input-system) that has the Input System package and reads input from it (Active Input Handling: Input
+System), with the Input System's own tests of the package; its results are Build~/Tests/<api>-input-system.xml.
 Build weft.dll first (Scripts~/BuildWeft.ps1).
 
 .EXAMPLE
 powershell -File Scripts~/RunTests.ps1 -Apis d3d11,d3d12
+
+.EXAMPLE
+powershell -File Scripts~/RunTests.ps1 -Apis d3d11 -InputSystem
 #>
 param(
     [string]$UnityEditor = $(if ($env:UNITY_EDITOR_DIR) { $env:UNITY_EDITOR_DIR } else { "E:/Unity/Editor" }),
@@ -23,6 +29,8 @@ param(
     [string]$Config = "Release",
     # Only the native tests.
     [switch]$NativeOnly,
+    # The PlayMode tests in the project that reads input from the Input System.
+    [switch]$InputSystem,
     [string]$ProjectDir = (Join-Path ([IO.Path]::GetTempPath()) "weft-unity-tests")
 )
 $ErrorActionPreference = "Stop"
@@ -43,19 +51,33 @@ foreach ($api in @("d3d11", "d3d12")) {
 }
 if ($NativeOnly) { return }
 
-# The test project: the package from this repository, the test framework, and image encoding for the tests' PNGs.
-$project = $ProjectDir
+# The test project: the package from this repository, the test framework, and image encoding for the tests' PNGs (and
+# the Input System, for the project that reads input from it).
+$project = if ($InputSystem) { "$ProjectDir-input-system" } else { $ProjectDir }
+$suffix = if ($InputSystem) { "-input-system" } else { "" }
 if ($project -match '~') { throw "the test project's path has a '~' ($project)" }
 New-Item -ItemType Directory -Force (Join-Path $project "Assets"), (Join-Path $project "Packages") | Out-Null
-$manifest = [ordered]@{
-    dependencies = [ordered]@{
-        "com.jiahaoli.weft" = "file:" + $package.Replace('\', '/')
-        "com.unity.test-framework" = "1.4.5"
-        "com.unity.modules.imageconversion" = "1.0.0"
-    }
-    testables = @("com.jiahaoli.weft")
+$dependencies = [ordered]@{
+    "com.jiahaoli.weft" = "file:" + $package.Replace('\', '/')
+    "com.unity.test-framework" = "1.4.5"
+    "com.unity.modules.imageconversion" = "1.0.0"
 }
+if ($InputSystem) { $dependencies["com.unity.inputsystem"] = "1.11.1" }
+$manifest = [ordered]@{ dependencies = $dependencies; testables = @("com.jiahaoli.weft") }
 [IO.File]::WriteAllText((Join-Path $project "Packages/manifest.json"), ($manifest | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
+# Active Input Handling (0 the Input Manager, 1 the Input System), which the editor reads when it starts: a new project's
+# settings are made by opening it once.
+$settings = Join-Path $project "ProjectSettings/ProjectSettings.asset"
+if (-not (Test-Path $settings)) {
+    Write-Host "Weft: making the test project $project"
+    $made = Start-Process -FilePath $unity -ArgumentList @("-batchmode", "-quit", "-projectPath", "`"$project`"", "-logFile",
+        "`"$(Join-Path $project 'make.log')`"") -Wait -PassThru -NoNewWindow
+    if (-not (Test-Path $settings)) { throw "Unity made no project settings (exit $($made.ExitCode)); see $project/make.log" }
+}
+$handler = if ($InputSystem) { 1 } else { 0 }
+$text = [IO.File]::ReadAllText($settings)
+$set = [regex]::Replace($text, '(?m)^(\s*activeInputHandler:) \d+', "`$1 $handler")
+if ($set -ne $text) { [IO.File]::WriteAllText($settings, $set, (New-Object Text.UTF8Encoding $false)) }
 # Scenes the test runner leaves behind when a run is ended under it.
 Remove-Item (Join-Path $project "Assets/InitTestScene*") -ErrorAction SilentlyContinue
 $out = Join-Path $package "Build~/Tests"
@@ -63,13 +85,13 @@ New-Item -ItemType Directory -Force $out | Out-Null
 
 $failed = @()
 foreach ($api in $Apis) {
-    $results = Join-Path $out "$api.xml"
-    $log = Join-Path $out "$api.log"
+    $results = Join-Path $out "$api$suffix.xml"
+    $log = Join-Path $out "$api$suffix.log"
     Remove-Item $results, $log -ErrorAction SilentlyContinue
     $arguments = @("-batchmode", "-projectPath", "`"$project`"", "-runTests", "-testPlatform", "PlayMode",
         "-testResults", "`"$results`"", "-logFile", "`"$log`"", "-force-$api")
     if ($Filter) { $arguments += @("-testFilter", $Filter) }
-    Write-Host "Weft: PlayMode tests on $api"
+    Write-Host "Weft: PlayMode tests on $api$(if ($InputSystem) { ' (Input System)' })"
     $process = Start-Process -FilePath $unity -ArgumentList $arguments -WorkingDirectory $package -Wait -PassThru -NoNewWindow
     if (-not (Test-Path $results)) {
         Write-Host "  no results (exit $($process.ExitCode)); see $log"

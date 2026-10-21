@@ -24,7 +24,8 @@ namespace Weft
         /// a stylesheet's bounds those of an app's (8 MiB, 16384 rules) instead of 64 KiB and 256 rules.
         /// </summary>
         public bool ForgivingCss;
-        /// <summary>The web platform pages written for browsers expect: console, localStorage, dataset, focus, matchMedia.</summary>
+        /// <summary>The web platform pages written for browsers expect: console, localStorage, dataset, matchMedia (the focus and
+        /// the keyboard are every page's).</summary>
         public bool WebPlatform;
         /// <summary>An absolute path (a file's: what follows its last '/' is no part of it); empty: url() images find nothing.</summary>
         public string Base = string.Empty;

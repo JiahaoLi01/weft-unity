@@ -2,9 +2,9 @@
 // (IUnityGraphics, IUnityGraphicsD3D11 or IUnityGraphicsD3D12v8, IUnityLog) over a real device.
 //
 // D3D11: the runtime starts, a View loads a page, its frame is queued on the main thread and drawn by the render event
-// on Unity's render thread, and its pixels are read back; messages go both ways; pointer input and hit tests; a target
-// weft cannot draw into is a failure counted and said, not a crash; the runtime stops and starts again (a new renderer
-// for the new runtime).
+// on Unity's render thread, and its pixels are read back; messages go both ways; pointer input and hit tests; keys,
+// their text and the window's focus at a page's focused element; a target weft cannot draw into is a failure counted
+// and said, not a crash; the runtime stops and starts again (a new renderer for the new runtime).
 // D3D12: the stand-in records Unity's frames into a command list, tracks resource states as Unity does
 // (RequestResourceState, NotifyResourceState) and signals its frame fence: frames are drawn into a texture that was a
 // shader resource, recordings complete by the fence, and a renderer of a stopped runtime is destroyed once they have.
@@ -449,6 +449,40 @@ int run_d3d11(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
     const weft_pointer_event move{sizeof(move), WEFT_POINTER_MOVE, 8, 4, 0, 0, 0, 0};
     std::uint32_t prevented = 1;
     check(weft_unity_view_pointer(view, &move, &prevented) == WEFT_OK && prevented == 0, "a pointer move");
+
+    watchdog.step("keyboard");
+    // Keys go to the page's focused element with Chrome's default actions (Tab moves the focus to the button, Enter
+    // clicks it), the text a key typed is a keypress, and the window's focus leaving the View blurs the element.
+    auto keys = make_view(float(width), float(height));
+    load(keys,
+         "const b = document.getElementById('root').appendChild(document.createElement('button'));"
+         "for (const type of ['focus', 'blur', 'click']) b.addEventListener(type, () => weft.engine.send('log', type));"
+         "document.addEventListener('keypress', e => weft.engine.send('log', 'keypress:' + e.key));",
+         "#root{position:relative;width:100%;height:100%}button{position:absolute;left:0;top:0;width:20px;height:10px}");
+    advance(keys, 0.016);
+    const auto key = [&](weft_key_kind kind, std::string_view value, std::string_view code) {
+        const weft_key_event e{sizeof(e), std::uint32_t(kind), value.data(), value.size(), code.data(), code.size(), 0, 0, 0, 0};
+        std::uint32_t handled = 0;
+        return weft_unity_view_key(keys, &e, &handled) == WEFT_OK ? handled : 0xffffffffu;
+    };
+    check(key(WEFT_KEY_DOWN, "Tab", "Tab") == WEFT_INPUT_DEFAULT, "Tab moves the focus");
+    check(key(WEFT_KEY_UP, "Tab", "Tab") == 0, "its keyup is the game's");
+    check(key(WEFT_KEY_DOWN, "Enter", "Enter") == WEFT_INPUT_DEFAULT, "Enter clicks the focused button");
+    key(WEFT_KEY_UP, "Enter", "Enter");
+    std::uint32_t handled = 1;
+    check(key(WEFT_KEY_DOWN, "a", "KeyA") == 0 && weft_unity_view_text(keys, "a", 1, &handled) == WEFT_OK && handled == 0,
+          "a letter's keydown and keypress, which the page leaves");
+    key(WEFT_KEY_UP, "a", "KeyA");
+    check(weft_unity_view_set_focus(keys, 0) == WEFT_OK, "the window's focus leaves the View");
+    std::string log;
+    for (const auto& [name, json] : advance(keys, 0.032).messages) {
+        log += (log.empty() ? "" : ",") + json;
+    }
+    check(log == "\"focus\",\"keypress:Enter\",\"click\",\"keypress:a\",\"blur\"", "the page's events: " + log);
+    char enter[32]{};
+    check(weft_keyboard_key("Enter", 5, 0, enter) == WEFT_OK && std::string_view(enter) == "Enter",
+          "the key value of a physical key (weft's own, exported)");
+    weft_unity_view_destroy(keys);
 
     watchdog.step("a target weft cannot draw into");
     ID3D11Texture2D* wrong = make_target(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height);

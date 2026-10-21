@@ -8,7 +8,9 @@ namespace Weft
     /// takes the game's events, view models and anchors, and draws into a render texture on Unity's render thread.
     /// A full-screen View follows the screen's size, gets the mouse and is drawn over everything (in OnGUI); otherwise
     /// it is a texture of its size for the game to show (<see cref="Texture"/> with <see cref="WeftComposite.Material"/>)
-    /// and takes the pointer events the game gives it.
+    /// and takes the pointer events the game gives it. The View with the keyboard focus (a press on its page's elements, or
+    /// <see cref="Focus"/>) reads the keyboard, as a browser's page gets it; the keys the page does not use are the game's
+    /// (<see cref="KeyUsed(string)"/>).
     /// </summary>
     [AddComponentMenu("Weft/Weft View")]
     public sealed unsafe class WeftView : MonoBehaviour
@@ -30,8 +32,16 @@ namespace Weft
         [Tooltip("Order among full-screen Views: higher draws later (on top), as GUI.depth lower.")]
         [SerializeField] int order = 0;
 
+        [Tooltip("Read the keyboard while the View has the focus (a press on its page's elements, or Focus()), as a browser's " +
+                 "page gets it: the keys go to the page's focused element, and those it does not use are the game's (KeyUsed).")]
+        [SerializeField] bool keyboard = true;
+
         [Tooltip("Log the page's diagnostics (exceptions, missing images) as warnings.")]
         [SerializeField] bool logDiagnostics = true;
+
+        // The View with the keyboard focus, and whether the game's window has the system's.
+        static WeftView focused;
+        static bool applicationFocused = true;
 
         WeftNative.ViewHandle view;
         bool created;
@@ -48,6 +58,17 @@ namespace Weft
         readonly byte[] cursorBytes = new byte[32];
         int cursorLength = -1;
         string cursorName = "auto";
+        // Whether the page was last told it has the focus (weft's Views start with it), and whether the View counts among
+        // those the keyboard is read for (from its OnEnable to its OnDisable).
+        bool pageFocus;
+        bool reading;
+        // The frame the page last used each key in (by WeftKeys' index), or a key of another code the game gave it; the
+        // key the text that follows belongs to.
+        readonly int[] usedFrames = NoFrames();
+        string usedCode;
+        int usedCodeFrame = -1;
+        int lastDown = -1;
+        string lastDownCode;
 
         /// <summary>The page's messages (weft.engine.send and weft.engine.call), during the View's Update.</summary>
         public event Action<WeftMessage> MessageReceived;
@@ -92,6 +113,22 @@ namespace Weft
 
         /// <summary>The page's size in CSS px.</summary>
         public Vector2 LogicalSize => (Vector2)PixelSize / scale;
+
+        /// <summary>Whether the View reads the keyboard while it has the focus; off, the game gives it keys (Key, Text).</summary>
+        public bool Keyboard
+        {
+            get => keyboard;
+            set => keyboard = value;
+        }
+
+        /// <summary>
+        /// The View with the keyboard focus, whose page has it as a browser window's page has it (focus and blur, :focus);
+        /// null when the game has it. A press on a page's elements gives it to their View when it reads the keyboard, one
+        /// beside them takes it away.
+        /// </summary>
+        public static WeftView FocusedView => focused;
+
+        public bool HasFocus => focused == this;
 
         /// <summary>
         /// The page's clock this frame, in seconds (it only goes forward): its frames run at it (performance.now() reads
@@ -257,6 +294,18 @@ namespace Weft
             {
                 return false;
             }
+            if (kind == WeftPointerKind.Down && keyboard)
+            {
+                // Before the page's mousedown, as a browser window gets the focus before the press that gave it.
+                if (HitTest(position).Element)
+                {
+                    Focus();
+                }
+                else
+                {
+                    Blur();
+                }
+            }
             var e = new WeftNative.PointerEvent
             {
                 StructSize = (uint)sizeof(WeftNative.PointerEvent),
@@ -270,6 +319,218 @@ namespace Weft
             uint prevented = 0;
             WeftNative.weft_unity_view_pointer(view, &e, &prevented);
             return prevented != 0;
+        }
+
+        /// <summary>Gives the View the keyboard focus (and takes it from the View that had it).</summary>
+        public void Focus()
+        {
+            if (focused == this)
+            {
+                return;
+            }
+            var previous = focused;
+            focused = this;
+            if (previous)
+            {
+                previous.ApplyFocus();
+            }
+            ApplyFocus();
+        }
+
+        /// <summary>Gives the keyboard focus back to the game when the View has it.</summary>
+        public void Blur()
+        {
+            if (focused == this)
+            {
+                focused = null;
+                ApplyFocus();
+            }
+        }
+
+        /// <summary>
+        /// A key going down (or repeating) or up at the page's focused element (the body without one), with Chrome's
+        /// default actions: Tab moves the focus, Enter and Space press buttons, the arrow and page keys scroll. code is
+        /// KeyboardEvent.code ("KeyA", "Enter"; WeftKeys.Code and the Input System's Key.WeftCode give Unity's keys'),
+        /// key its value, by default what the system's layout types with it (<see cref="WeftKeys.KeyValue"/>). For keys
+        /// the game gives the View itself (Keyboard off).
+        /// </summary>
+        public WeftInputResult Key(WeftKeyKind kind, string code, string key = null, WeftModifiers modifiers = WeftModifiers.None,
+            bool repeat = false)
+        {
+            if (!created || string.IsNullOrEmpty(code))
+            {
+                return WeftInputResult.None;
+            }
+            var codeLength = WeftRuntime.Utf8(code, ref nameBuffer);
+            var keyLength = WeftRuntime.Utf8(string.IsNullOrEmpty(key) ? WeftKeys.KeyValue(code, modifiers) : key, ref valueBuffer);
+            WeftInputResult result;
+            fixed (byte* c = nameBuffer)
+            fixed (byte* k = valueBuffer)
+            {
+                result = SendKey(kind == WeftKeyKind.Down, k, keyLength, c, codeLength, modifiers, repeat);
+            }
+            var index = WeftKeys.IndexOf(code);
+            if (kind == WeftKeyKind.Down)
+            {
+                lastDown = index;
+                lastDownCode = index < 0 ? code : null;
+            }
+            if (result != WeftInputResult.None)
+            {
+                Used(index, code);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Text a key typed, after its keydown: a keypress for each character (Space's scrolls a page outside a button).
+        /// After a keydown the page used the text is dropped (Default), as Chrome drops it.
+        /// </summary>
+        public WeftInputResult Text(string text)
+        {
+            if (!created || string.IsNullOrEmpty(text))
+            {
+                return WeftInputResult.None;
+            }
+            var length = WeftRuntime.Utf8(text, ref valueBuffer);
+            fixed (byte* t = valueBuffer)
+            {
+                return TextFromDevice(t, length);
+            }
+        }
+
+        /// <summary>
+        /// Whether the page used the key this frame: a listener prevented its keydown, keyup or text, or weft acted on it
+        /// (moved the focus, scrolled, clicked). The game leaves such a key alone, as Chrome keeps the keys a page used from
+        /// the browser. The View reads the keyboard before the scripts' Update, so it is known there.
+        /// </summary>
+        public bool KeyUsed(string code)
+        {
+            var index = WeftKeys.IndexOf(code);
+            return index >= 0 ? usedFrames[index] == Time.frameCount : usedCodeFrame == Time.frameCount && usedCode == code;
+        }
+
+        /// <summary>Whether the page used an Input Manager key this frame.</summary>
+        public bool KeyUsed(KeyCode key)
+        {
+            return KeyUsedAt(WeftKeys.IndexOf(key));
+        }
+
+        // Whether the page used a key (WeftKeys' index) this frame.
+        internal bool KeyUsedAt(int index)
+        {
+            return index >= 0 && usedFrames[index] == Time.frameCount;
+        }
+
+        // A key of the keyboard's (WeftKeys' index) for the focused View: its value as the system's layout gives it.
+        internal void KeyFromDevice(int index, bool down, WeftModifiers modifiers, bool repeat)
+        {
+            if (!created)
+            {
+                return;
+            }
+            var code = WeftKeys.Utf8[index];
+            var key = stackalloc byte[32];
+            WeftInputResult result;
+            fixed (byte* c = code)
+            {
+                var keyLength = 0;
+                if (WeftNative.weft_keyboard_key(c, (UIntPtr)code.Length, (uint)modifiers, key) == WeftNative.Result.Ok)
+                {
+                    while (keyLength < 31 && key[keyLength] != 0)
+                    {
+                        ++keyLength;
+                    }
+                }
+                if (keyLength == 0)
+                {
+                    foreach (var b in unidentified)
+                    {
+                        key[keyLength++] = b;
+                    }
+                }
+                result = SendKey(down, key, keyLength, c, code.Length, modifiers, repeat);
+            }
+            if (down)
+            {
+                lastDown = index;
+                lastDownCode = null;
+            }
+            if (result != WeftInputResult.None)
+            {
+                Used(index, null);
+            }
+        }
+
+        internal WeftInputResult TextFromDevice(byte* text, int size)
+        {
+            if (!created)
+            {
+                return WeftInputResult.None;
+            }
+            uint handled = 0;
+            var result = WeftNative.weft_unity_view_text(view, text, (UIntPtr)size, &handled) == WeftNative.Result.Ok
+                ? (WeftInputResult)handled
+                : WeftInputResult.None;
+            if (result != WeftInputResult.None)
+            {
+                Used(lastDown, lastDownCode);
+            }
+            return result;
+        }
+
+        static readonly byte[] unidentified = System.Text.Encoding.ASCII.GetBytes("Unidentified");
+
+        WeftInputResult SendKey(bool down, byte* key, int keyLength, byte* code, int codeLength, WeftModifiers modifiers, bool repeat)
+        {
+            var e = new WeftNative.KeyEvent
+            {
+                StructSize = (uint)sizeof(WeftNative.KeyEvent),
+                Kind = down ? 0u : 1u,
+                Key = key,
+                KeySize = (UIntPtr)keyLength,
+                Code = code,
+                CodeSize = (UIntPtr)codeLength,
+                Modifiers = (uint)modifiers,
+                Flags = down && repeat ? WeftNative.KeyRepeat : 0,
+            };
+            uint handled = 0;
+            return WeftNative.weft_unity_view_key(view, &e, &handled) == WeftNative.Result.Ok ? (WeftInputResult)handled : WeftInputResult.None;
+        }
+
+        void Used(int index, string code)
+        {
+            if (index >= 0)
+            {
+                usedFrames[index] = Time.frameCount;
+            }
+            else if (code != null)
+            {
+                usedCode = code;
+                usedCodeFrame = Time.frameCount;
+            }
+        }
+
+        static int[] NoFrames()
+        {
+            var frames = new int[WeftKeys.Count];
+            for (var i = 0; i < frames.Length; ++i)
+            {
+                frames[i] = -1;
+            }
+            return frames;
+        }
+
+        // The page has the focus while its View has the game's and the game's window has the system's.
+        void ApplyFocus()
+        {
+            var has = focused == this && applicationFocused;
+            if (!created || has == pageFocus)
+            {
+                return;
+            }
+            pageFocus = has;
+            WeftNative.weft_unity_view_set_focus(view, has ? 1u : 0u);
         }
 
         /// <summary>What is under a point in the View's logical px.</summary>
@@ -331,6 +592,10 @@ namespace Weft
             appliedScale = scale;
             surface = new WeftSurface();
             surface.Resize(pixels.x, pixels.y);
+            pageFocus = true;
+            ApplyFocus();
+            WeftKeyboardInput.Attach();
+            reading = true;
             if (loaded != null)
             {
                 Load(loaded);
@@ -347,10 +612,40 @@ namespace Weft
             {
                 WeftNative.weft_unity_view_destroy(view);
             }
+            if (reading)
+            {
+                WeftKeyboardInput.Detach();
+                reading = false;
+            }
+            if (focused == this)
+            {
+                focused = null;
+            }
             created = false;
             surface?.Dispose();
             surface = null;
             PointerOverPage = false;
+        }
+
+        void OnApplicationFocus(bool hasFocus)
+        {
+            if (applicationFocused != hasFocus)
+            {
+                applicationFocused = hasFocus;
+                if (!hasFocus)
+                {
+                    WeftKeyboardInput.Release();
+                }
+            }
+            ApplyFocus();
+        }
+
+        // A play session without a domain reload keeps static state.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetFocus()
+        {
+            focused = null;
+            applicationFocused = true;
         }
 
         void Update()

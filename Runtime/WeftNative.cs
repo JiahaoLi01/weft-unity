@@ -15,6 +15,7 @@ namespace Weft
         public const uint PageWebPlatform = 4;
         public const uint ValueJson = 2;
         public const uint EmitLatest = 1;
+        public const uint KeyRepeat = 1;
 
         public enum Result
         {
@@ -105,6 +106,21 @@ namespace Weft
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct KeyEvent
+        {
+            public uint StructSize;
+            public uint Kind;
+            public byte* Key;
+            public UIntPtr KeySize;
+            public byte* Code;
+            public UIntPtr CodeSize;
+            public uint Modifiers;
+            public uint Flags;
+            public uint KeyCode;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct Hit
         {
             public uint StructSize;
@@ -150,6 +166,9 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_view_diagnostic(ViewHandle view, uint index, uint* kind, byte** text, UIntPtr* size);
         [DllImport(Dll)] public static extern Result weft_unity_view_pointer(ViewHandle view, PointerEvent* pointer, uint* prevented);
         [DllImport(Dll)] public static extern Result weft_unity_view_hit_test(ViewHandle view, float x, float y, Hit* hit);
+        [DllImport(Dll)] public static extern Result weft_unity_view_key(ViewHandle view, KeyEvent* key, uint* handled);
+        [DllImport(Dll)] public static extern Result weft_unity_view_text(ViewHandle view, byte* text, UIntPtr textSize, uint* handled);
+        [DllImport(Dll)] public static extern Result weft_unity_view_set_focus(ViewHandle view, uint focused);
         [DllImport(Dll)] public static extern Result weft_unity_set_texture(byte* name, UIntPtr nameSize, IntPtr texture, uint width, uint height);
         [DllImport(Dll)] public static extern uint weft_unity_queue_draw(ViewHandle view, IntPtr target, uint width, uint height, float scale, uint clear);
         [DllImport(Dll)] public static extern IntPtr weft_unity_render_event();
@@ -161,6 +180,7 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_view_complete_call(IntPtr runtime, ViewHandle view, ulong callId, uint succeeded, uint format, byte* payload, UIntPtr payloadSize);
         [DllImport(Dll)] public static extern Result weft_view_set_model(IntPtr runtime, ViewHandle view, byte* model, UIntPtr modelSize, uint format, byte* fields, UIntPtr fieldsSize);
         [DllImport(Dll)] public static extern Result weft_view_write_anchors(IntPtr runtime, ViewHandle view, WeftAnchor* anchors, UIntPtr count);
+        [DllImport(Dll)] public static extern Result weft_keyboard_key(byte* code, UIntPtr codeSize, uint modifiers, byte* key);
         [DllImport(Dll)] public static extern IntPtr weft_result_string(Result result);
 
         public static string Text(byte* bytes, UIntPtr size)

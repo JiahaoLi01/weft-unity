@@ -62,6 +62,13 @@ weft_result weft_unity_view_diagnostic(weft_view_handle view, uint32_t index, ui
 weft_result weft_unity_view_pointer(weft_view_handle view, const weft_pointer_event* event, uint32_t* out_prevented);
 weft_result weft_unity_view_hit_test(weft_view_handle view, float x, float y, weft_hit* out_hit);
 
+/* Owner: keyboard input (weft_view_key, weft_view_text) and the keyboard focus of the game's window coming to the View
+ * and leaving it (weft_view_set_focus). weft_keyboard_key, the key value of a physical key in the system's layout, is
+ * weft's own and any thread's. */
+weft_result weft_unity_view_key(weft_view_handle view, const weft_key_event* event, uint32_t* out_handled);
+weft_result weft_unity_view_text(weft_view_handle view, const char* text, size_t text_size, uint32_t* out_handled);
+weft_result weft_unity_view_set_focus(weft_view_handle view, uint32_t focused);
+
 /* ---- The engine's textures: a page's background-image: -weft-texture(name). ---- */
 
 /* Binds a name the pages show by -weft-texture(name) to a texture of Unity's (Texture.GetNativeTexturePtr: an

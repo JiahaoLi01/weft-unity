@@ -102,6 +102,41 @@ namespace Weft
         Middle = 4,
     }
 
+    public enum WeftKeyKind : uint
+    {
+        Down = 0,
+        Up = 1,
+    }
+
+    /// <summary>
+    /// The modifiers held during a key event (KeyboardEvent.getModifierState): a modifier key's own keydown has its flag,
+    /// its keyup not.
+    /// </summary>
+    [Flags]
+    public enum WeftModifiers : uint
+    {
+        None = 0,
+        Shift = 1,
+        Control = 2,
+        Alt = 4,
+        Meta = 8,
+        AltGraph = 16,
+        CapsLock = 32,
+        NumLock = 64,
+    }
+
+    /// <summary>What the page did with a key or the text it typed.</summary>
+    [Flags]
+    public enum WeftInputResult : uint
+    {
+        /// <summary>Nothing: the key is the game's, as Chrome gives the browser the keys a page did not use.</summary>
+        None = 0,
+        /// <summary>A listener prevented its default action.</summary>
+        Prevented = 1,
+        /// <summary>weft acted on it, or began to: it moved the focus, scrolled, clicked, or made a button :active.</summary>
+        Default = 2,
+    }
+
     /// <summary>What is under a point of the View.</summary>
     public readonly struct WeftHit
     {

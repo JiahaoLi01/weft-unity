@@ -1,0 +1,32 @@
+{
+    "name": "Weft.Tests.InputSystem",
+    "rootNamespace": "Weft.Tests",
+    "references": [
+        "Weft.Runtime",
+        "Unity.InputSystem",
+        "Unity.InputSystem.TestFramework",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS",
+        "WEFT_INPUT_SYSTEM",
+        "ENABLE_INPUT_SYSTEM"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.8.0",
+            "define": "WEFT_INPUT_SYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}
