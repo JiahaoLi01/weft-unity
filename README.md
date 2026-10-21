@@ -52,6 +52,10 @@ view.MessageReceived += m =>             // weft.engine.send / weft.engine.call
 view.Emit("units", json, latest: true);              // weft.engine.on('units', ...)
 view.SetModel("camera", "{\"tier\":\"Mid\"}");        // weft.engine.model('camera')
 
+// 页面每帧自己推进的东西（施法条、冷却）：只在开始时给它开始的时刻与时长。时刻在页面的时钟上（秒；页面里
+// performance.now() 与 requestAnimationFrame 的时间是它的毫秒）
+view.Emit("cast", string.Format(CultureInfo.InvariantCulture, "{{\"start\":{0:0.0000},\"duration\":2.4}}", view.PageTime));
+
 // 每帧跟着场景走的元素：锚点（页面写 data-anchor="<Key>"），渲染线程直接移动，不跑脚本、不重排
 view.WriteAnchors(anchors);              // WeftAnchor: Key, X, Y（逻辑 px）, Scale, Depth, Flags
 

@@ -93,6 +93,12 @@ namespace Weft
         /// <summary>The page's size in CSS px.</summary>
         public Vector2 LogicalSize => (Vector2)PixelSize / scale;
 
+        /// <summary>
+        /// The page's clock this frame, in seconds (it only goes forward): its frames run at it (performance.now() reads
+        /// it in ms). Times the engine gives the page (when something began, for the page to carry on each frame) are on it.
+        /// </summary>
+        public double PageTime => Math.Max(time, Time.unscaledTimeAsDouble);
+
         Vector2Int PixelSize => fullScreen ? new Vector2Int(Screen.width, Screen.height) : size;
 
         /// <summary>Loads the page of a folder (relative to StreamingAssets, or absolute).</summary>
@@ -414,8 +420,7 @@ namespace Weft
 
         void Advance()
         {
-            // weft's clock only goes forward.
-            time = Math.Max(time, Time.unscaledTimeAsDouble);
+            time = PageTime;
             uint messages = 0, diagnostics = 0;
             var result = WeftNative.weft_unity_view_advance(view, time, &messages, &diagnostics);
             for (uint i = 0; i < diagnostics; ++i)
