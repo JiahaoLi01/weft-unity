@@ -23,7 +23,10 @@ namespace Weft
     // texture). Its composition goes to the page as it changes, the text it commits as a commit (no keypresses, as Chrome
     // gives an input method's text), and the keys that go down while it composes as keys it took (key "Process"). The
     // Input Manager gives the composition (Input.compositionString) and its commit (the frame's text when a composition
-    // went on), the Input System its composition events and the commit's text.
+    // went on), the Input System its composition events and the commit's text. The Input Manager's Input.inputString has
+    // only what keys type in ASCII, so while a text field takes text the frame's text is that of IMGUI's key events
+    // instead (an input method's commit, any character), which are taken from IMGUI's queue, as UGUI's input field takes
+    // them while it has the keyboard.
     internal static unsafe class WeftKeyboardInput
     {
         enum Kind : byte
@@ -72,6 +75,13 @@ namespace Weft
 #endif
         static bool inputMethodOn;
         static Vector2 candidates = new Vector2(float.NaN, float.NaN);
+        // Whether the page's text field took text at the end of the last frame (the Input Manager's text then comes from
+        // IMGUI's key events).
+        static bool fieldActive;
+#if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
+        static readonly Event imguiEvent = new Event();
+        static readonly StringBuilder eventText = new StringBuilder();
+#endif
 #if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
         static IMECompositionMode modeBefore;
 #endif
@@ -124,6 +134,7 @@ namespace Weft
             compositions.Clear();
             lastComposition = string.Empty;
             composing = false;
+            fieldActive = false;
 #if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
             committing = false;
 #endif
@@ -304,6 +315,7 @@ namespace Weft
         static void InputMethod(WeftView view)
         {
             var input = view != null ? view.TextInput : default;
+            fieldActive = input.Active;
             var on = input.Active && !input.Password;
             var place = on && view.FullScreen;
             var caret = place ? new Vector2(input.Caret.xMin, input.Caret.yMax) * view.Scale : default;
@@ -401,7 +413,7 @@ namespace Weft
         {
 #if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
             var composition = Input.compositionString ?? string.Empty;
-            var typed = Input.inputString;
+            var typed = fieldActive ? EventText() : Input.inputString;
             if (heldCount == 0 && !Input.anyKeyDown && composition == lastComposition && string.IsNullOrEmpty(typed))
             {
                 return;
@@ -434,6 +446,22 @@ namespace Weft
             }
 #endif
         }
+
+#if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
+        // The characters of the frame's IMGUI key events, taken from its queue (the events go to no OnGUI then).
+        static string EventText()
+        {
+            eventText.Clear();
+            while (Event.PopEvent(imguiEvent))
+            {
+                if (imguiEvent.rawType == EventType.KeyDown && imguiEvent.character != 0)
+                {
+                    eventText.Append(imguiEvent.character);
+                }
+            }
+            return eventText.ToString();
+        }
+#endif
 
 #if WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
         // Before the Input System applies a keyboard's event: the keys it changes, and its text. Events the editor's
