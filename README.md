@@ -92,7 +92,7 @@ if (Input.GetKeyDown(KeyCode.Space) && !view.KeyUsed(KeyCode.Space)) { /* 给游
 
 - 页面的 `<input>`（文字类型）与 `<textarea>` 照 Chrome 编辑（weft 做：打字、选择、鼠标、事件）。`Pointer(...)` 带修饰键（默认取键盘按着的），Shift+点击扩展选区。
 - `view.TextInput`（`WeftTextInput`）说文字往哪里去：页面里可编辑的文本框有焦点、View 有键盘焦点时 `Active`，`Composing`（输入法正在组合）、`Password`，光标与文本框的矩形（View 的逻辑像素，左上原点）。
-- 输入法：读键盘的 View 在 `TextInput.Active` 且不是密码框时打开输入法（Input Manager 的 `Input.imeCompositionMode = On`，离开时恢复原来的；Input System 的 `Keyboard.SetIMEEnabled`），全屏 View 把候选窗放在光标下面（`Input.compositionCursorPos`、`Keyboard.SetIMECursorPosition`；画在物体上的 View 由游戏按它怎么显示纹理来放）。组合串变化时给页面（compositionstart、compositionupdate、input），上屏的文字结束组合（compositionend），不发 keypress，同 Chrome。Input Manager 从 `Input.compositionString` 读组合串，组合之后那一帧的 `Input.inputString` 是上屏的文字；Input System 从 `IMECompositionEvent` 读组合串，组合中（或组合刚结束、下一帧之前）的文字事件是上屏的文字。组合进行时按下的键（和开始组合的那个键）是输入法的：页面收到 key 为 "Process"、keyCode 229 的 keydown，`KeyUsed` 为真；按住时的重复同样。
+- 输入法：读键盘的 View 在 `TextInput.Active` 且不是密码框时打开输入法（Input Manager 的 `Input.imeCompositionMode = On`，离开时恢复原来的；Input System 的 `Keyboard.SetIMEEnabled`），全屏 View 把候选窗放在光标下面（`Input.compositionCursorPos`、`Keyboard.SetIMECursorPosition`；画在物体上的 View 由游戏按它怎么显示纹理来放）。组合串变化时给页面（compositionstart、compositionupdate、input），上屏的文字结束组合（compositionend），不发 keypress，同 Chrome。Input Manager 从 `Input.compositionString` 读组合串，组合之后那一帧的文字是上屏的文字：`Input.inputString` 只有按键打出的 ASCII 字符（Unity 的文档如此，单独来的 `WM_CHAR` 它也不收），所以文本框有焦点时，这一帧的文字取 IMGUI 的键盘事件（`Event.PopEvent`，同 UGUI 的输入框在有焦点时那样取走它们，这期间 OnGUI 收不到这些事件）；Input System 从 `IMECompositionEvent` 读组合串，组合中（或组合刚结束、下一帧之前）的文字事件是上屏的文字。组合进行时按下的键（和开始组合的那个键）是输入法的：页面收到 key 为 "Process"、keyCode 229 的 keydown，`KeyUsed` 为真；按住时的重复同样。
 - 游戏自己读输入法时（`Keyboard = false`）：`Compose(text, cursor)`、`CommitText(text)`、`Key(..., ime: true)`。
 
 ## 示例
