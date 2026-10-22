@@ -412,12 +412,15 @@ namespace Weft
         static void PollInputManager()
         {
 #if !(WEFT_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM) && ENABLE_LEGACY_INPUT_MANAGER
-            var composition = Input.compositionString ?? string.Empty;
-            var typed = fieldActive ? EventText() : Input.inputString;
-            if (heldCount == 0 && !Input.anyKeyDown && composition == lastComposition && string.IsNullOrEmpty(typed))
+            // Unity makes a string of the composition and of the frame's text each time they are read: the composition
+            // only while the input method is on (or composed), the text only when keys went down (or a text field takes
+            // its text from IMGUI's events), so that a frame without input allocates nothing.
+            var composition = inputMethodOn || lastComposition.Length > 0 ? Input.compositionString ?? string.Empty : string.Empty;
+            if (heldCount == 0 && !Input.anyKeyDown && composition == lastComposition && !fieldActive)
             {
                 return;
             }
+            var typed = fieldActive ? EventText() : Input.inputString;
             // Keys that go down while the input method composes are its own.
             var ime = lastComposition.Length > 0 || composition.Length > 0;
             for (var pass = 0; pass < 2; ++pass)
