@@ -217,6 +217,8 @@ namespace Weft
 #endif
             Repeat();
             InputMethod(Target());
+            // Then the gamepads, read at the same point of the frame.
+            WeftGamepadInput.Tick();
         }
 
         // Whether the input method's composition changes next, before another key goes down or text comes: the key that

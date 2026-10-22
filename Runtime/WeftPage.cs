@@ -27,6 +27,12 @@ namespace Weft
         /// <summary>The web platform pages written for browsers expect: console, localStorage, dataset, matchMedia (the focus and
         /// the keyboard are every page's).</summary>
         public bool WebPlatform;
+        /// <summary>
+        /// Chrome's spatial navigation: the arrow keys move the focus to the nearest element their way (the pointer with
+        /// it), Escape blurs it; and the gamepads' D-pad and left stick, A and B are the arrow keys, Enter and Escape while
+        /// the View has the focus.
+        /// </summary>
+        public bool SpatialNavigation;
         /// <summary>An absolute path (a file's: what follows its last '/' is no part of it); empty: url() images find nothing.</summary>
         public string Base = string.Empty;
 
@@ -45,8 +51,8 @@ namespace Weft
         /// <summary>
         /// The page of a folder (relative to StreamingAssets, or absolute): its page.json names the scripts, the
         /// stylesheet and keyframes files, the root, and whether the page uses the CRPG bridge, forgiving CSS
-        /// ("forgivingCss") and the web platform ("webPlatform"); without one the folder's page.js, page.css and
-        /// keyframes.css are the page.
+        /// ("forgivingCss"), the web platform ("webPlatform") and spatial navigation ("spatialNavigation"); without one
+        /// the folder's page.js, page.css and keyframes.css are the page.
         /// </summary>
         public static WeftPage FromDirectory(string directory)
         {
@@ -85,6 +91,7 @@ namespace Weft
                 page.CrpgBridge = manifest.crpgBridge;
                 page.ForgivingCss = manifest.forgivingCss;
                 page.WebPlatform = manifest.webPlatform;
+                page.SpatialNavigation = manifest.spatialNavigation;
             }
             else
             {
@@ -136,6 +143,7 @@ namespace Weft
             public bool crpgBridge = false;
             public bool forgivingCss = false;
             public bool webPlatform = false;
+            public bool spatialNavigation = false;
         }
     }
 }

@@ -305,4 +305,24 @@ weft_result weft_unity_view_commit_text(weft_view_handle view, const char* text,
         return running() ? weft_view_commit_text(running(), view, text, text_size, out_taken) : WEFT_STALE_HANDLE;
     });
 }
+
+weft_result weft_unity_view_gamepads(weft_view_handle view, const weft_gamepad_state* states, uint32_t count,
+                                     uint32_t* out_handled) {
+    if (!states && count) {
+        return WEFT_INVALID_ARGUMENT;
+    }
+    return on_owner([&] {
+        if (!running()) {
+            return WEFT_STALE_HANDLE;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            const weft_result r =
+                weft_view_gamepad(running(), view, &states[i], out_handled ? &out_handled[i] : nullptr);
+            if (r != WEFT_OK) {
+                return r;
+            }
+        }
+        return WEFT_OK;
+    });
+}
 }

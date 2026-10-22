@@ -61,16 +61,21 @@ namespace Weft.Tests
             }
             log.Clear();
             WeftKeyboardInput.Restore();
+            // The fixture's gamepads go with it.
+            for (var slot = 0; slot < 4; ++slot)
+            {
+                WeftGamepadInput.SetState(slot, false);
+            }
             base.TearDown();
         }
 
-        WeftView Make(string script = Script, string css = Css, bool fullScreen = false)
+        WeftView Make(string script = Script, string css = Css, bool fullScreen = false, bool spatialNavigation = false, int height = 32)
         {
             host = new GameObject("Weft View");
             host.SetActive(false);
             var view = host.AddComponent<WeftView>();
             view.FullScreen = fullScreen;
-            view.Size = new Vector2Int(64, 32);
+            view.Size = new Vector2Int(64, height);
             view.MessageReceived += m =>
             {
                 if (m.Name == "log")
@@ -81,6 +86,7 @@ namespace Weft.Tests
             view.DiagnosticReceived += d => Assert.Fail($"{d.Kind}: {d.Text}");
             var page = WeftPage.FromSource(script, css);
             page.ForgivingCss = true;
+            page.SpatialNavigation = spatialNavigation;
             view.Load(page);
             host.SetActive(true);
             return view;
@@ -212,6 +218,76 @@ namespace Weft.Tests
             view.Blur();
             yield return null;
             Assert.That(imeEnabled, Is.False, "the input method is off while the game has the keyboard");
+        }
+
+        // Three buttons one under the other with spatial navigation; the page logs its keys, focus and gamepad events,
+        // and on 'probe' the first gamepad's left trigger and axes.
+        const string GamepadScript =
+            "const root = document.getElementById('root');" +
+            "const log = s => weft.engine.send('log', s);" +
+            "for (const id of ['a', 'b', 'c']) {" +
+            "  const n = root.appendChild(document.createElement('button'));" +
+            "  n.addEventListener('focus', () => log('focus:' + id));" +
+            "}" +
+            "document.addEventListener('keydown', e => log('keydown:' + e.key));" +
+            "document.addEventListener('keyup', e => log('keyup:' + e.key));" +
+            "addEventListener('gamepadconnected', e => log('connected:' + e.gamepad.index + ':' + e.gamepad.id));" +
+            "addEventListener('gamepaddisconnected', e => log('disconnected:' + e.gamepad.index));" +
+            "weft.engine.on('probe', () => { const g = navigator.getGamepads()[0];" +
+            "  if (!g) return log('pad:none');" +
+            "  const t = g.buttons[6];" +
+            "  log('pad:' + t.pressed + ':' + t.value.toFixed(2) + ':' + g.axes.map(a => a.toFixed(2)).join(',')); });";
+
+        const string GamepadCss =
+            "#root{position:relative;width:100%;height:100%;margin:0}" +
+            "button{display:block;width:40px;height:20px;margin:4px;border:0;padding:0}";
+
+        // The Input System's gamepads: each in a slot as it comes, with Chrome's id for an XInput one; its D-pad and left
+        // stick (y up there, down on the page) move the focus of the focused View's page with spatial navigation; a
+        // trigger is pressed from 30 of 255; one that goes is disconnected.
+        [UnityTest]
+        public IEnumerator GamepadsOfTheInputSystem()
+        {
+            var xinput = InputSystem.AddDevice<UnityEngine.InputSystem.XInput.XInputController>();
+            Assert.That(WeftGamepadInput.Id(xinput), Is.EqualTo(WeftGamepadInput.XInputId), "Chrome's id of an XInput gamepad");
+            InputSystem.RemoveDevice(xinput);
+            var gamepad = InputSystem.AddDevice<Gamepad>();
+            var id = WeftGamepadInput.Id(gamepad);
+            Assert.That(id, Does.EndWith(" (STANDARD GAMEPAD)"));
+            var view = Make(GamepadScript, GamepadCss, false, true, 96);
+            yield return null;
+            yield return null;
+            view.Focus();
+            yield return null;
+            log.Clear();
+            Press(gamepad.dpad.down);
+            yield return null;
+            Assert.That(log, Is.EqualTo(new[] {"connected:0:" + id, "keydown:ArrowDown", "focus:a"}));
+            Assert.That(view.GamepadUsed(0, WeftGamepadButton.DpadDown));
+            log.Clear();
+            // The D-pad comes up as the stick goes right: ArrowDown's keyup before ArrowRight's keydown (nothing is to the
+            // right). The D-pad's down and the stick's are both ArrowDown, held through a change from one to the other.
+            Release(gamepad.dpad.down);
+            Set(gamepad.leftStick, new Vector2(0.75f, 0.25f));
+            yield return null;
+            Assert.That(log, Is.EqualTo(new[] {"keyup:ArrowDown", "keydown:ArrowRight"}), "what comes up goes first");
+            log.Clear();
+            Set(gamepad.leftStick, new Vector2(0.25f, -0.75f));
+            yield return null;
+            Assert.That(log, Is.EqualTo(new[] {"keyup:ArrowRight", "keydown:ArrowDown", "focus:b"}), "the stick down");
+            Assert.That(view.GamepadUsed(0, WeftGamepadButton.LeftStick));
+            log.Clear();
+            Set(gamepad.leftStick, new Vector2(0.25f, 0.25f));
+            Set(gamepad.leftTrigger, 0.2f);
+            yield return null;
+            view.Emit("probe");
+            yield return null;
+            Assert.That(log, Is.EqualTo(new[] {"keyup:ArrowDown", "pad:true:0.20:0.25,-0.25,0.00,0.00"}),
+                "the trigger pressed from 30 of 255; the stick's y down");
+            log.Clear();
+            InputSystem.RemoveDevice(gamepad);
+            yield return null;
+            Assert.That(log, Is.EqualTo(new[] {"disconnected:0"}));
         }
     }
 }

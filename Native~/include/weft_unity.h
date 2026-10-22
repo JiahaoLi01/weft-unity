@@ -77,6 +77,11 @@ weft_result weft_unity_view_composition(weft_view_handle view, const char* text,
 weft_result weft_unity_view_commit_text(weft_view_handle view, const char* text, size_t text_size,
                                         uint32_t* out_taken);
 
+/* Owner: gamepads' states, in order (weft_view_gamepad for each); out_handled, when given, has count entries, each
+ * state's WEFT_INPUT_* bits. The first state weft refuses ends the call with its result. */
+weft_result weft_unity_view_gamepads(weft_view_handle view, const weft_gamepad_state* states, uint32_t count,
+                                     uint32_t* out_handled);
+
 /* ---- The engine's textures: a page's background-image: -weft-texture(name). ---- */
 
 /* Binds a name the pages show by -weft-texture(name) to a texture of Unity's (Texture.GetNativeTexturePtr: an

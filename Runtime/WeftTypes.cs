@@ -139,6 +139,35 @@ namespace Weft
     }
 
     /// <summary>
+    /// A gamepad's buttons in the Gamepad API's standard order (a page's navigator.getGamepads()[i].buttons[button]), and
+    /// its left stick, which a page with spatial navigation takes as the arrow keys as the D-pad (<see cref="WeftView.GamepadUsed"/>).
+    /// </summary>
+    public enum WeftGamepadButton
+    {
+        /// <summary>The bottom face button (Xbox A, PlayStation Cross): Enter on a page with spatial navigation.</summary>
+        A = 0,
+        /// <summary>The right face button (Xbox B, PlayStation Circle): Escape on a page with spatial navigation.</summary>
+        B = 1,
+        X = 2,
+        Y = 3,
+        LeftShoulder = 4,
+        RightShoulder = 5,
+        LeftTrigger = 6,
+        RightTrigger = 7,
+        Back = 8,
+        Start = 9,
+        LeftStickPress = 10,
+        RightStickPress = 11,
+        DpadUp = 12,
+        DpadDown = 13,
+        DpadLeft = 14,
+        DpadRight = 15,
+        Home = 16,
+        /// <summary>The left stick past half its way, as an arrow key.</summary>
+        LeftStick = 17,
+    }
+
+    /// <summary>
     /// Where text input goes (<see cref="WeftView.TextInput"/>): whether a text field the user may edit (an input of a text
     /// type, a textarea) has the page's focus while the View has the keyboard, whether an input method composes in it,
     /// whether it is a password field (where Chrome keeps input methods off), and its caret and border box in the View's

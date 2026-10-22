@@ -10,7 +10,9 @@ namespace Weft
     /// it is a texture of its size for the game to show (<see cref="Texture"/> with <see cref="WeftComposite.Material"/>)
     /// and takes the pointer events the game gives it. The View with the keyboard focus (a press on its page's elements, or
     /// <see cref="Focus"/>) reads the keyboard, as a browser's page gets it; the keys the page does not use are the game's
-    /// (<see cref="KeyUsed(string)"/>).
+    /// (<see cref="KeyUsed(string)"/>). Every View's page sees the gamepads; on a page with spatial navigation
+    /// (<see cref="WeftPage.SpatialNavigation"/>) the focused View's page moves its focus with them, and what it used of
+    /// them is not the game's (<see cref="GamepadUsed"/>).
     /// </summary>
     [AddComponentMenu("Weft/Weft View")]
     public sealed unsafe class WeftView : MonoBehaviour
@@ -35,6 +37,11 @@ namespace Weft
         [Tooltip("Read the keyboard while the View has the focus (a press on its page's elements, or Focus()), as a browser's " +
                  "page gets it: the keys go to the page's focused element, and those it does not use are the game's (KeyUsed).")]
         [SerializeField] bool keyboard = true;
+
+        [Tooltip("Read the gamepads: the page sees them (navigator.getGamepads()), and on a page with spatial navigation the " +
+                 "View with the focus moves the page's focus with the D-pad and the left stick, A and B (what the page used " +
+                 "of them is not the game's: GamepadUsed).")]
+        [SerializeField] bool gamepads = true;
 
         [Tooltip("Log the page's diagnostics (exceptions, missing images) as warnings.")]
         [SerializeField] bool logDiagnostics = true;
@@ -69,6 +76,13 @@ namespace Weft
         int usedCodeFrame = -1;
         int lastDown = -1;
         string lastDownCode;
+        // The version of each gamepad slot's state the page last got (WeftGamepadInput), and of each gamepad what the
+        // page has (it used their press: WeftGamepadButton bits, the left stick's directions past them) and what of
+        // that came up in the frame below.
+        internal readonly int[] gamepadVersions = new int[WeftNative.GamepadSlots];
+        readonly uint[] gamepadHas = new uint[WeftNative.GamepadSlots];
+        readonly uint[] gamepadReleased = new uint[WeftNative.GamepadSlots];
+        int gamepadReleasedFrame = -1;
 
         /// <summary>The page's messages (weft.engine.send and weft.engine.call), during the View's Update.</summary>
         public event Action<WeftMessage> MessageReceived;
@@ -120,6 +134,23 @@ namespace Weft
             get => keyboard;
             set => keyboard = value;
         }
+
+        /// <summary>Whether the View reads the gamepads (its page sees them; with spatial navigation they move its focus).</summary>
+        public bool Gamepads
+        {
+            get => gamepads;
+            set
+            {
+                // Turned on again, the page gets every gamepad's state anew.
+                if (value && !gamepads)
+                {
+                    Array.Clear(gamepadVersions, 0, gamepadVersions.Length);
+                }
+                gamepads = value;
+            }
+        }
+
+        internal bool ReadsGamepads => created && gamepads;
 
         /// <summary>
         /// The View with the keyboard focus, whose page has it as a browser window's page has it (focus and blur, :focus);
@@ -190,7 +221,8 @@ namespace Weft
                     {
                         StructSize = (uint)sizeof(WeftNative.PageDesc),
                         Flags = (next.CrpgBridge ? WeftNative.PageCrpgBridge : 0) | (next.ForgivingCss ? WeftNative.PageForgivingCss : 0) |
-                                (next.WebPlatform ? WeftNative.PageWebPlatform : 0),
+                                (next.WebPlatform ? WeftNative.PageWebPlatform : 0) |
+                                (next.SpatialNavigation ? WeftNative.PageSpatialNavigation : 0),
                         Scripts = s,
                         ScriptCount = (uint)scripts.Length,
                         Stylesheet = css,
@@ -203,6 +235,8 @@ namespace Weft
                         BaseSize = (UIntPtr)baseBytes.Length,
                     };
                     var result = WeftNative.weft_unity_view_load(view, &desc);
+                    // The new page gets every gamepad's state.
+                    Array.Clear(gamepadVersions, 0, gamepadVersions.Length);
                     // A page that throws loads empty; its error is a diagnostic of the next advance.
                     if (result != WeftNative.Result.ScriptError)
                     {
@@ -505,6 +539,55 @@ namespace Weft
             return index >= 0 && usedFrames[index] == Time.frameCount;
         }
 
+        /// <summary>
+        /// Whether the page has a gamepad's button, or its left stick: on a page with spatial navigation it used the
+        /// press (the arrow key, Enter or Escape it stands for moved the focus, clicked or blurred, or a listener prevented it), and
+        /// the button is still down or came up this frame. The game leaves it alone, as it leaves the keys the page used
+        /// (KeyUsed). gamepad is the slot, 0 to 3: the page's navigator.getGamepads() index.
+        /// </summary>
+        public bool GamepadUsed(int gamepad, WeftGamepadButton button)
+        {
+            if ((uint)gamepad >= WeftNative.GamepadSlots || (uint)button > (uint)WeftGamepadButton.LeftStick)
+            {
+                return false;
+            }
+            // The left stick is a key for each direction it may go.
+            var bits = button == WeftGamepadButton.LeftStick ? WeftGamepadInput.LeftStickMask : 1u << (int)button;
+            return (gamepadHas[gamepad] & bits) != 0 ||
+                   gamepadReleasedFrame == Time.frameCount && (gamepadReleased[gamepad] & bits) != 0;
+        }
+
+        // The gamepads' states that changed (WeftGamepadInput; slots[i] is the slot of states[i]), with what went down and
+        // came up in each slot this frame: what the page had that came up is its own until the frame ends, and what went
+        // down with a state whose keys the page used is its own until it comes up.
+        internal void GamepadsFromDevice(WeftNative.GamepadState* states, int* slots, int count, uint* wentDown, uint* cameUp)
+        {
+            var frame = Time.frameCount;
+            if (gamepadReleasedFrame != frame)
+            {
+                Array.Clear(gamepadReleased, 0, gamepadReleased.Length);
+                gamepadReleasedFrame = frame;
+            }
+            for (var i = 0; i < count; ++i)
+            {
+                var s = slots[i];
+                gamepadReleased[s] |= gamepadHas[s] & cameUp[s];
+                gamepadHas[s] &= ~cameUp[s];
+            }
+            var handled = stackalloc uint[WeftNative.GamepadSlots];
+            if (WeftNative.weft_unity_view_gamepads(view, states, (uint)count, handled) != WeftNative.Result.Ok)
+            {
+                return;
+            }
+            for (var i = 0; i < count; ++i)
+            {
+                if (handled[i] != 0)
+                {
+                    gamepadHas[slots[i]] |= wentDown[slots[i]];
+                }
+            }
+        }
+
         // A key of the keyboard's (WeftKeys' index) for the focused View: its value as the system's layout gives it.
         internal void KeyFromDevice(int index, bool down, WeftModifiers modifiers, bool repeat, bool ime = false)
         {
@@ -681,6 +764,8 @@ namespace Weft
             ApplyFocus();
             WeftKeyboardInput.Attach();
             reading = true;
+            Array.Clear(gamepadVersions, 0, gamepadVersions.Length);
+            WeftGamepadInput.Attach(this);
             if (loaded != null)
             {
                 Load(loaded);
@@ -702,6 +787,8 @@ namespace Weft
                 WeftKeyboardInput.Detach();
                 reading = false;
             }
+            WeftGamepadInput.Detach(this);
+            Array.Clear(gamepadHas, 0, gamepadHas.Length);
             if (focused == this)
             {
                 focused = null;

@@ -13,6 +13,10 @@ namespace Weft
         public const uint PageCrpgBridge = 1;
         public const uint PageForgivingCss = 2;
         public const uint PageWebPlatform = 4;
+        public const uint PageSpatialNavigation = 8;
+        public const int GamepadSlots = 4;
+        public const int GamepadButtons = 17;
+        public const int GamepadAxes = 4;
         public const uint ValueJson = 2;
         public const uint EmitLatest = 1;
         public const uint KeyRepeat = 1;
@@ -139,6 +143,21 @@ namespace Weft
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct GamepadState
+        {
+            public uint StructSize;
+            public uint Index;
+            public uint Connected;
+            public uint Pressed;
+            public uint Touched;
+            public uint Reserved;
+            public byte* Id;
+            public UIntPtr IdSize;
+            public fixed float Buttons[GamepadButtons];
+            public fixed float Axes[GamepadAxes];
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct Hit
         {
             public uint StructSize;
@@ -190,6 +209,7 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_view_text_input(ViewHandle view, TextInput* input);
         [DllImport(Dll)] public static extern Result weft_unity_view_composition(ViewHandle view, byte* text, UIntPtr textSize, uint selectionStart, uint selectionEnd, uint* taken);
         [DllImport(Dll)] public static extern Result weft_unity_view_commit_text(ViewHandle view, byte* text, UIntPtr textSize, uint* taken);
+        [DllImport(Dll)] public static extern Result weft_unity_view_gamepads(ViewHandle view, GamepadState* states, uint count, uint* handled);
         [DllImport(Dll)] public static extern Result weft_unity_set_texture(byte* name, UIntPtr nameSize, IntPtr texture, uint width, uint height);
         [DllImport(Dll)] public static extern uint weft_unity_queue_draw(ViewHandle view, IntPtr target, uint width, uint height, float scale, uint clear);
         [DllImport(Dll)] public static extern IntPtr weft_unity_render_event();
