@@ -423,6 +423,7 @@ namespace Weft
             var typed = fieldActive ? EventText() : Input.inputString;
             // Keys that go down while the input method composes are its own.
             var ime = lastComposition.Length > 0 || composition.Length > 0;
+            var keyDown = false;
             for (var pass = 0; pass < 2; ++pass)
             {
                 for (var i = 0; i < WeftKeys.Count; ++i)
@@ -430,11 +431,14 @@ namespace Weft
                     if (WeftKeys.TypesAt(i) == (pass == 1) && Input.GetKeyDown(WeftKeys.LegacyAt(i)))
                     {
                         Enqueue(Kind.Down, i, ime);
+                        keyDown = true;
                     }
                 }
             }
-            // The text of a frame after a composition is what the input method committed.
-            Enqueue(typed, lastComposition.Length > 0);
+            // The text of a frame after a composition is what the input method committed, and so is text no key typed
+            // while it is on: what it puts in without a composition (Microsoft Pinyin's punctuation), whose key Unity
+            // does not see go down. As a commit it is no key's text, which a key the page used before would drop.
+            Enqueue(typed, lastComposition.Length > 0 || inputMethodOn && !keyDown && heldCount == 0);
             if (composition != lastComposition && (composition.Length > 0 || string.IsNullOrEmpty(typed)))
             {
                 EnqueueComposition(composition);
