@@ -21,6 +21,16 @@ namespace Weft
         public const uint EmitLatest = 1;
         public const uint KeyRepeat = 1;
         public const uint KeyIme = 2;
+        public const uint EffectNumber = 1;
+        public const uint EffectVec2 = 2;
+        public const uint EffectVec3 = 3;
+        public const uint EffectVec4 = 4;
+        public const uint EffectColor = 5;
+        public const uint EffectTextureData = 1;
+        public const uint EffectTextureSrgb = 2;
+        public const uint EffectTexturePng = 0x100;
+        public const uint BuildDevTools = 1;
+        public const uint DevToolsAllInterfaces = 1;
 
         public enum Result
         {
@@ -36,6 +46,7 @@ namespace Weft
             InternalError = 9,
             ScriptError = 10,
             Faulted = 11,
+            Unavailable = 12,
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -95,7 +106,108 @@ namespace Weft
             public UIntPtr FamilySize;
             public byte* Path;
             public UIntPtr PathSize;
+            public byte* UnicodeRange;
+            public UIntPtr UnicodeRangeSize;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct EffectParameter
+        {
+            public byte* Name;
+            public UIntPtr NameSize;
+            public byte* Initial;
+            public UIntPtr InitialSize;
+            public uint Type;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct EffectTexture
+        {
+            public byte* Name;
+            public UIntPtr NameSize;
+            public byte* Bytes;
+            public UIntPtr Size;
+            public uint Format;
+            public uint Width;
+            public uint Height;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct EffectDesc
+        {
+            public uint StructSize;
+            public uint Animated;
+            public byte* Name;
+            public UIntPtr NameSize;
+            public EffectParameter* Parameters;
+            public EffectTexture* Textures;
+            public uint ParameterCount;
+            public uint TextureCount;
+            public byte* DxbcEncoded;
+            public UIntPtr DxbcEncodedSize;
+            public byte* DxbcLinear;
+            public UIntPtr DxbcLinearSize;
+            public byte* SpirvEncoded;
+            public UIntPtr SpirvEncodedSize;
+            public byte* SpirvLinear;
+            public UIntPtr SpirvLinearSize;
+            public uint Backdrop;
+            public float BackdropMargin;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct BuildInfo
+        {
+            public uint StructSize;
+            public uint AbiVersion;
+            public uint Flags;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DevToolsDesc
+        {
+            public uint StructSize;
+            public uint Flags;
+            public uint Port;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DevToolsInfo
+        {
+            public uint StructSize;
+            public uint Port;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct ViewFrameInfo
+        {
+            public uint StructSize;
+            public uint Animated;
+            public ulong Revision;
+            public double TimeSeconds;
+            public float LogicalWidth;
+            public float LogicalHeight;
+            public float DeviceScale;
+            public uint Reserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DrawTime
+        {
+            public uint Slot;
+            public uint Generation;
+            public double Seconds;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void StorageItemFn(IntPtr user, byte* key, UIntPtr keySize, byte* value, UIntPtr valueSize);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void TextFn(IntPtr user, uint ok, byte* text, UIntPtr textSize);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct PointerEvent
@@ -194,6 +306,7 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_add_font(FontFace* face);
         [DllImport(Dll)] public static extern Result weft_unity_set_generic_family(byte* generic, UIntPtr genericSize, byte* family, UIntPtr familySize);
         [DllImport(Dll)] public static extern Result weft_unity_add_fallback_family(byte* family, UIntPtr familySize);
+        [DllImport(Dll)] public static extern Result weft_unity_add_effect(EffectDesc* effect);
         [DllImport(Dll)] public static extern Result weft_unity_view_create(ViewDesc* desc, ViewHandle* view);
         [DllImport(Dll)] public static extern Result weft_unity_view_destroy(ViewHandle view);
         [DllImport(Dll)] public static extern Result weft_unity_view_load(ViewHandle view, PageDesc* page);
@@ -201,6 +314,15 @@ namespace Weft
         [DllImport(Dll)] public static extern Result weft_unity_view_advance(ViewHandle view, double timeSeconds, uint* messages, uint* diagnostics);
         [DllImport(Dll)] public static extern Result weft_unity_view_message(ViewHandle view, uint index, Message* message);
         [DllImport(Dll)] public static extern Result weft_unity_view_diagnostic(ViewHandle view, uint index, uint* kind, byte** text, UIntPtr* size);
+        [DllImport(Dll)] public static extern uint weft_unity_view_dropped_diagnostics(ViewHandle view);
+        [DllImport(Dll)] public static extern Result weft_unity_view_set_storage_item(ViewHandle view, byte* key, UIntPtr keySize, byte* value, UIntPtr valueSize);
+        [DllImport(Dll)] public static extern Result weft_unity_view_clear_storage(ViewHandle view);
+        [DllImport(Dll)] public static extern Result weft_unity_view_get_storage(ViewHandle view, ulong revision, StorageItemFn fn, IntPtr user, ulong* outRevision);
+        [DllImport(Dll)] public static extern Result weft_unity_view_evaluate(ViewHandle view, byte* source, UIntPtr sourceSize, TextFn fn, IntPtr user);
+        [DllImport(Dll)] public static extern Result weft_unity_view_frame_info(ViewHandle view, ViewFrameInfo* info);
+        [DllImport(Dll)] public static extern Result weft_unity_devtools_start(DevToolsDesc* desc);
+        [DllImport(Dll)] public static extern Result weft_unity_devtools_stop();
+        [DllImport(Dll)] public static extern Result weft_unity_devtools_get_info(DevToolsInfo* info);
         [DllImport(Dll)] public static extern Result weft_unity_view_pointer(ViewHandle view, PointerEvent* pointer, uint* prevented);
         [DllImport(Dll)] public static extern Result weft_unity_view_hit_test(ViewHandle view, float x, float y, Hit* hit);
         [DllImport(Dll)] public static extern Result weft_unity_view_key(ViewHandle view, KeyEvent* key, uint* handled);
@@ -215,8 +337,11 @@ namespace Weft
         [DllImport(Dll)] public static extern IntPtr weft_unity_render_event();
         [DllImport(Dll)] public static extern int weft_unity_render_event_id();
         [DllImport(Dll)] public static extern void weft_unity_render_get_stats(RenderStats* stats);
+        [DllImport(Dll)] public static extern void weft_unity_render_set_measuring(uint enabled);
+        [DllImport(Dll)] public static extern uint weft_unity_render_take_draw_times(DrawTime* outTimes, uint capacity);
 
         // weft's own, callable from any thread.
+        [DllImport(Dll)] public static extern Result weft_get_build_info(BuildInfo* info);
         [DllImport(Dll)] public static extern Result weft_view_emit(IntPtr runtime, ViewHandle view, byte* name, UIntPtr nameSize, uint format, byte* payload, UIntPtr payloadSize, uint flags);
         [DllImport(Dll)] public static extern Result weft_view_complete_call(IntPtr runtime, ViewHandle view, ulong callId, uint succeeded, uint format, byte* payload, UIntPtr payloadSize);
         [DllImport(Dll)] public static extern Result weft_view_set_model(IntPtr runtime, ViewHandle view, byte* model, UIntPtr modelSize, uint format, byte* fields, UIntPtr fieldsSize);

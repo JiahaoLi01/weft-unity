@@ -66,5 +66,5 @@ extern "C" uint32_t weft_unity_queue_draw(weft_view_handle view, void* target, u
     if (weft_view_acquire_frame(runtime, view, &frame) != WEFT_OK || !frame) {
         return 0;
     }
-    return weft_unity::DrawQueue::get().push({frame, target, width, height, scale, clear != 0, host.epoch()});
+    return weft_unity::DrawQueue::get().push({view, frame, target, width, height, scale, clear != 0, host.epoch()});
 }

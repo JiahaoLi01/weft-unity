@@ -7,8 +7,11 @@
 #include "IUnityLog.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 
 // Unity's side of the plugin: its graphics device's events make and end the render device of its API, and its render
 // thread's plugin event (weft_unity_render_event, with a draw's id as its data) draws the draws the main thread queued.
@@ -22,6 +25,10 @@ namespace {
 
     std::mutex stats_lock;
     weft_unity_render_stats stats{};
+
+    std::atomic<bool> measuring_draws{false};
+    std::mutex draw_times_lock;
+    std::unordered_map<std::uint64_t, double> draw_times;
 
     void say(UnityLogType type, const std::string& text) {
         if (unity_log) {
@@ -111,7 +118,15 @@ namespace {
             return;
         }
         std::string why = "no renderer for Unity's graphics API";
+        const bool measure = measuring_draws.load(std::memory_order_relaxed);
+        const auto started = measure ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const bool drawn = device && device->draw(*draw, why);
+        if (measure && drawn) {
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            const std::uint64_t key = (std::uint64_t(draw->view.slot) << 32) | draw->view.generation;
+            std::lock_guard lock(draw_times_lock);
+            draw_times[key] += seconds;
+        }
         weft_view_frame_release(draw->frame);
         note(drawn, why);
     }
@@ -145,5 +160,33 @@ void weft_unity_render_get_stats(weft_unity_render_stats* out_stats) {
         std::lock_guard lock(stats_lock);
         *out_stats = stats;
     }
+}
+
+void weft_unity_render_set_measuring(uint32_t enabled) {
+    const bool on = enabled != 0;
+    measuring_draws.store(on, std::memory_order_relaxed);
+    if (!on) {
+        std::lock_guard lock(draw_times_lock);
+        draw_times.clear();
+    }
+}
+
+uint32_t weft_unity_render_take_draw_times(weft_unity_draw_time* out_times, uint32_t capacity) {
+    std::unordered_map<std::uint64_t, double> taken;
+    {
+        std::lock_guard lock(draw_times_lock);
+        taken.swap(draw_times);
+    }
+    if (!out_times || !capacity) {
+        return 0;
+    }
+    uint32_t count = 0;
+    for (const auto& [key, seconds] : taken) {
+        if (count >= capacity) {
+            break;
+        }
+        out_times[count++] = {std::uint32_t(key >> 32), std::uint32_t(key & 0xffffffffu), seconds};
+    }
+    return count;
 }
 }

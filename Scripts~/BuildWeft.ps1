@@ -1,13 +1,19 @@
 <#
 .SYNOPSIS
-Builds weft and the plugin's native code into Runtime/Plugins/x86_64/weft.dll.
+Builds weft and the plugin's native code into Dev (Runtime/Plugins/x86_64/weft.dll) and Release (Runtime/Plugins~/Release/x86_64/weft.dll).
 
 .DESCRIPTION
 Weft (https://github.com/JiahaoLi01/weft) is built from a checkout of its own (by default the folder `weft` next to
 this repository, or WEFT_SOURCE_DIR) with CMake and Visual Studio 2022, against Unity's native plugin headers (by
-default those of E:/Unity/Editor, or UNITY_EDITOR_DIR); the Vulkan SDK's DXC adds the Vulkan backend. The DLL and the
-.meta files Unity imports it by are written here and not committed. Run it again after the weft checkout changes, with
-the Unity editors that loaded the old DLL closed (an editor keeps it until it quits).
+default those of E:/Unity/Editor, or UNITY_EDITOR_DIR); the Vulkan SDK's DXC adds the Vulkan backend. Both DLLs export
+the same C ABI:
+
+  Runtime/Plugins/x86_64/weft.dll           Dev build (WEFT_DEVTOOLS=ON): Editor, PlayMode and Development players.
+  Runtime/Plugins~/Release/x86_64/weft.dll  Release build (WEFT_DEVTOOLS=OFF): swapped in for Release players
+                                            automatically by Editor/WeftBuildProcessor.cs (no DevTools, no WS2_32.dll).
+
+The shader effect compiler scripts (compile_effect.cmake, check_effect.cmake, scene.hlsl) are copied to Tools~/Effects/.
+Run it again after the weft checkout changes, with Unity editors that loaded the old DLL closed.
 
 .EXAMPLE
 powershell -File Scripts~/BuildWeft.ps1 -WeftSource F:/Projects/weft -UnityEditor E:/Unity/Editor
@@ -16,7 +22,8 @@ param(
     [string]$WeftSource = $env:WEFT_SOURCE_DIR,
     [string]$UnityEditor = $(if ($env:UNITY_EDITOR_DIR) { $env:UNITY_EDITOR_DIR } else { "E:/Unity/Editor" }),
     [ValidateSet("Release", "RelWithDebInfo")]
-    [string]$Config = "Release"
+    [string]$Config = "Release",
+    [switch]$SkipRelease
 )
 # Native tools write warnings to stderr; their exit codes say whether they failed.
 $ErrorActionPreference = "Continue"
@@ -32,20 +39,41 @@ $pluginApi = Join-Path $UnityEditor "Data/PluginAPI"
 if (-not (Test-Path (Join-Path $pluginApi "IUnityGraphics.h"))) {
     throw "$UnityEditor is not a Unity editor folder (no Data/PluginAPI/IUnityGraphics.h)"
 }
-$build = Join-Path $package "Build~/Native"
-Write-Host "Weft: building $WeftSource ($Config) in $build"
-cmake -S (Join-Path $package "Native~") -B $build -G "Visual Studio 17 2022" -A x64 "-DWEFT_SOURCE_DIR=$WeftSource" `
-    "-DUNITY_PLUGIN_API_DIR=$pluginApi"
-if ($LASTEXITCODE) { throw "cmake configure failed" }
-cmake --build $build --config $Config --target weft_unity weft_unity_tests --parallel
-if ($LASTEXITCODE) { throw "cmake build failed" }
 
-# The DLL, and the .meta files that import it into the editor and Windows players (fixed GUIDs, so that a rebuild is
-# the same asset).
+# Dev build (WEFT_DEVTOOLS=ON) + native test runner.
+$buildDev = Join-Path $package "Build~/Native"
+Write-Host "Weft: building $WeftSource ($Config, Dev: WEFT_DEVTOOLS=ON) in $buildDev"
+cmake -S (Join-Path $package "Native~") -B $buildDev -G "Visual Studio 17 2022" -A x64 "-DWEFT_SOURCE_DIR=$WeftSource" `
+    "-DUNITY_PLUGIN_API_DIR=$pluginApi" "-DWEFT_DEVTOOLS=ON"
+if ($LASTEXITCODE) { throw "cmake configure failed (Dev)" }
+cmake --build $buildDev --config $Config --target weft_unity weft_unity_tests --parallel
+if ($LASTEXITCODE) { throw "cmake build failed (Dev)" }
+
+# The Dev DLL and the .meta files that import it into the editor and Windows players (fixed GUIDs, so a rebuild is the
+# same asset). Editor/WeftBuildProcessor.cs replaces it with the Release DLL in non-Development player builds.
 $plugins = Join-Path $package "Runtime/Plugins"
 $folder = Join-Path $plugins "x86_64"
 New-Item -ItemType Directory -Force $folder | Out-Null
-Copy-Item (Join-Path $build "$Config/weft.dll") $folder -Force
+Copy-Item (Join-Path $buildDev "$Config/weft.dll") $folder -Force
+
+if (-not $SkipRelease) {
+    $buildRelease = Join-Path $package "Build~/NativeRelease"
+    Write-Host "Weft: building $WeftSource ($Config, Release: WEFT_DEVTOOLS=OFF) in $buildRelease"
+    cmake -S (Join-Path $package "Native~") -B $buildRelease -G "Visual Studio 17 2022" -A x64 "-DWEFT_SOURCE_DIR=$WeftSource" `
+        "-DUNITY_PLUGIN_API_DIR=$pluginApi" "-DWEFT_DEVTOOLS=OFF" "-DWEFT_UNITY_TESTS=OFF"
+    if ($LASTEXITCODE) { throw "cmake configure failed (Release)" }
+    cmake --build $buildRelease --config $Config --target weft_unity --parallel
+    if ($LASTEXITCODE) { throw "cmake build failed (Release)" }
+    $releaseFolder = Join-Path $package "Runtime/Plugins~/Release/x86_64"
+    New-Item -ItemType Directory -Force $releaseFolder | Out-Null
+    Copy-Item (Join-Path $buildRelease "$Config/weft.dll") $releaseFolder -Force
+}
+
+# The effect compiler with weft's shell: a game compiles its UI shader effects (-weft-effect) offline without a weft checkout.
+$effects = Join-Path $package "Tools~/Effects"
+New-Item -ItemType Directory -Force $effects | Out-Null
+Copy-Item (Join-Path $WeftSource "cmake/compile_effect.cmake"), (Join-Path $WeftSource "cmake/check_effect.cmake"),
+    (Join-Path $WeftSource "src/render/shaders/scene.hlsl") $effects -Force
 function Write-Meta([string]$Path, [string]$Text) {
     [System.IO.File]::WriteAllText($Path, $Text.Replace("`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
 }
@@ -130,4 +158,4 @@ PluginImporter:
 "@
 $commit = (git -C $WeftSource rev-parse HEAD).Trim()
 $branch = (git -C $WeftSource rev-parse --abbrev-ref HEAD).Trim()
-Write-Host "Weft: $branch $commit -> $folder"
+Write-Host "Weft: $branch $commit -> $folder (Dev)$(if (-not $SkipRelease) { ', Runtime/Plugins~/Release/x86_64 (Release)' }), Tools~/Effects"

@@ -47,6 +47,7 @@ namespace weft_unity {
         // What the View's last advance kept, valid until its next advance (any thread).
         const Message* message(weft_view_handle view, std::uint32_t index) const;
         const Diagnostic* diagnostic(weft_view_handle view, std::uint32_t index) const;
+        std::uint32_t dropped_diagnostics(weft_view_handle view) const;
 
     private:
         PageHost();
@@ -55,6 +56,7 @@ namespace weft_unity {
             weft_view_handle view{};
             std::vector<Message> messages;
             std::vector<Diagnostic> diagnostics;
+            std::uint32_t dropped_diagnostics = 0;
         };
         Kept* find(weft_view_handle view);
         const Kept* find(weft_view_handle view) const;

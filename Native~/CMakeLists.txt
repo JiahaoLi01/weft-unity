@@ -23,6 +23,7 @@ endif()
 set(WEFT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WEFT_BUILD_PROBES OFF CACHE BOOL "" FORCE)
 set(WEFT_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+option(WEFT_DEVTOOLS "Build the developer tools into weft" OFF)
 add_subdirectory("${WEFT_SOURCE_DIR}" weft)
 
 # The commit the DLL is built from, which the plugin logs when it starts ("+changes" for a checkout with changes).

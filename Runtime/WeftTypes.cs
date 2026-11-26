@@ -33,6 +33,53 @@ namespace Weft
         Frame = 3,
         /// <summary>The page's styles make no scene (the last frame stays), or an image it names is missing.</summary>
         Scene = 4,
+        /// <summary>console.log, console.info and console.debug output (WEFT_PAGE_WEB_PLATFORM).</summary>
+        Console = 5,
+        /// <summary>console.warn output (WEFT_PAGE_WEB_PLATFORM).</summary>
+        ConsoleWarning = 6,
+        /// <summary>console.error and failed console.assert output (WEFT_PAGE_WEB_PLATFORM).</summary>
+        ConsoleError = 7,
+    }
+
+    /// <summary>Which page elements claim pointer hits for <see cref="WeftView.PointerOverPage"/>.</summary>
+    public enum WeftPointerRouting
+    {
+        /// <summary>Any element other than the page's root claims the pointer.</summary>
+        Element = 0,
+        /// <summary>Only elements declaring a non-default CSS cursor (pointer, text, etc.) claim the pointer.</summary>
+        Cursor = 1,
+    }
+
+    /// <summary>Live diagnostics and per-frame timing of a View for the debug overlay, inspector and logs.</summary>
+    public struct WeftViewDebugInfo
+    {
+        public WeftView View;
+        /// <summary>Folder name of the loaded page (or script name without a base folder).</summary>
+        public string Page;
+        /// <summary>Target identifier in DevTools ("&lt;slot&gt;-&lt;generation&gt;").</summary>
+        public string Target;
+        /// <summary>Logical (CSS) size in px.</summary>
+        public Vector2 Size;
+        /// <summary>Device px per CSS px.</summary>
+        public float DeviceScale;
+        /// <summary>DOM element count (-1 when no page is loaded).</summary>
+        public int Elements;
+        /// <summary>Whether the page animates on its own (CSS animations/transitions or requestAnimationFrame).</summary>
+        public bool Animated;
+        /// <summary>Main-thread weft cost per frame in ms (average over the last second).</summary>
+        public float GameMs;
+        /// <summary>Main-thread weft cost per frame in ms (slowest frame over the last second).</summary>
+        public float GameMaxMs;
+        /// <summary>Render-thread draw recording cost per frame in ms (average over the last second).</summary>
+        public float DrawMs;
+        /// <summary>Render-thread draw recording cost per frame in ms (slowest frame over the last second).</summary>
+        public float DrawMaxMs;
+        /// <summary>Exceptions and console errors logged since the page loaded.</summary>
+        public int Errors;
+        /// <summary>Scene diagnostics and console warnings logged since the page loaded.</summary>
+        public int Warnings;
+        /// <summary>Chrome DevTools URL while DevTools are listening; empty otherwise.</summary>
+        public string DevToolsUrl;
     }
 
     public readonly struct WeftDiagnostic

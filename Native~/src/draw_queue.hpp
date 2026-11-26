@@ -10,6 +10,7 @@
 namespace weft_unity {
     // A View's frame to draw into a texture on Unity's render thread, and the runtime it is of.
     struct Draw {
+        weft_view_handle view{};
         weft_view_frame* frame = nullptr; // a reference of the draw's, released when it is drawn or dropped
         void* target = nullptr;           // the texture's native pointer
         std::uint32_t width = 0;

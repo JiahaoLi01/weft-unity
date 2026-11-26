@@ -557,6 +557,87 @@ int run_d3d11(bool warp, Watchdog& watchdog, RenderThread& render_thread) {
     check(weft_unity_set_texture("probe", 5, nullptr, 0, 0) == WEFT_OK, "the name is unbound");
     camera->Release();
 
+    watchdog.step("localStorage, evaluate, frame info, draw timing, devtools");
+    {
+        auto web = make_view(float(width), float(height));
+        check(weft_unity_view_set_storage_item(web, "saved", 5, "alpha", 5) == WEFT_OK, "storage item restored before load");
+        const std::string web_script =
+            "const v = localStorage.getItem('saved');"
+            "localStorage.setItem('reply', v + ':ok');"
+            "console.log('hello');"
+            "console.warn('careful');"
+            "document.getElementById('root').appendChild(document.createElement('div')).className = 'a';";
+        const weft_script ws{"page.js", 7, web_script.data(), web_script.size()};
+        const std::string web_css = box_page("#00ff00");
+        const weft_page_desc wpage{sizeof(wpage), WEFT_PAGE_WEB_PLATFORM | WEFT_PAGE_FORGIVING_CSS, &ws, 1, 0,
+                                   web_css.data(), web_css.size(), nullptr, 0, nullptr, 0, nullptr, 0};
+        check(weft_unity_view_load(web, &wpage) == WEFT_OK, "web platform page loads");
+        auto web_adv = advance(web, 0.016);
+        check(web_adv.diagnostics.size() >= 2, "console diagnostics drained");
+        std::map<std::string, std::string> stored;
+        std::uint64_t rev = 0;
+        check(weft_unity_view_get_storage(
+                  web, 0,
+                  [](void* user, const char* k, size_t ks, const char* v, size_t vs) {
+                      (*static_cast<std::map<std::string, std::string>*>(user))[std::string(k, ks)] = std::string(v, vs);
+                  },
+                  &stored, &rev) == WEFT_OK &&
+                  rev > 0 && stored["reply"] == "alpha:ok",
+              "localStorage round-trips between host and JS");
+        check(weft_unity_view_clear_storage(web) == WEFT_OK, "localStorage clears");
+        stored.clear();
+        std::uint64_t rev2 = 0;
+        check(weft_unity_view_get_storage(
+                  web, rev,
+                  [](void* user, const char* k, size_t ks, const char* v, size_t vs) {
+                      (*static_cast<std::map<std::string, std::string>*>(user))[std::string(k, ks)] = std::string(v, vs);
+                  },
+                  &stored, &rev2) == WEFT_OK &&
+                  rev2 != rev && stored.empty(),
+              "cleared localStorage advances revision and is empty");
+
+        std::string evaluated;
+        const std::string expr = "document.querySelectorAll('*').length";
+        check(weft_unity_view_evaluate(
+                  web, expr.data(), expr.size(),
+                  [](void* user, uint32_t ok, const char* text, size_t size) {
+                      if (ok) {
+                          static_cast<std::string*>(user)->assign(text, size);
+                      }
+                  },
+                  &evaluated) == WEFT_OK &&
+                  std::atoi(evaluated.c_str()) >= 2,
+              "weft_unity_view_evaluate counts elements: " + evaluated);
+
+        weft_view_frame_info finfo{sizeof(finfo)};
+        check(weft_unity_view_frame_info(web, &finfo) == WEFT_OK && finfo.animated == 0, "frame info reports non-animated");
+
+        weft_unity_render_set_measuring(1);
+        render(weft_unity_queue_draw(web, target, width, height, 1, 1));
+        weft_unity_draw_time times[8]{};
+        const uint32_t timed = weft_unity_render_take_draw_times(times, 8);
+        check(timed == 1 && times[0].slot == web.slot && times[0].generation == web.generation && times[0].seconds > 0.0,
+              "draw timing records per-view render seconds");
+        weft_unity_render_set_measuring(0);
+        render(weft_unity_queue_draw(web, target, width, height, 1, 1));
+        check(weft_unity_render_take_draw_times(times, 8) == 0, "draw timing records nothing when off");
+
+        weft_effect_desc bad_effect{sizeof(bad_effect)};
+        check(weft_unity_add_effect(&bad_effect) == WEFT_INVALID_ARGUMENT, "add_effect forwards validation to owner");
+
+        weft_build_info binfo{sizeof(binfo)};
+        check(weft_get_build_info(&binfo) == WEFT_OK && (binfo.flags & WEFT_BUILD_DEVTOOLS) != 0, "dev DLL reports WEFT_BUILD_DEVTOOLS");
+        weft_devtools_desc ddesc{sizeof(ddesc), 0, 0, 0};
+        check(weft_unity_devtools_start(&ddesc) == WEFT_OK, "devtools starts on first free port");
+        weft_devtools_info dinfo{sizeof(dinfo)};
+        check(weft_unity_devtools_get_info(&dinfo) == WEFT_OK && dinfo.port > 0, "devtools reports listening port");
+        check(weft_unity_devtools_stop() == WEFT_OK, "devtools stops");
+        dinfo = {sizeof(dinfo)};
+        check(weft_unity_devtools_get_info(&dinfo) == WEFT_OK && dinfo.port == 0, "devtools port is 0 after stop");
+
+        weft_unity_view_destroy(web);
+    }
+
     watchdog.step("stopping");
     weft_unity_stop();
     check(weft_unity_runtime() == nullptr, "the runtime stops");

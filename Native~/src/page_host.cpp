@@ -115,16 +115,18 @@ namespace weft_unity {
                     {m->kind, m->call_id, std::string(m->name, m->name_size), message_pack_to_json(m->payload, m->payload_size)});
             },
             &sent);
+        std::uint32_t dropped = 0;
         weft_view_drain_diagnostics(
             runtime, view,
             [](void* user, weft_view_handle, const weft_diagnostic* d) {
                 static_cast<std::vector<Diagnostic>*>(user)->push_back({d->kind, std::string(d->message, d->message_size)});
             },
-            &said, nullptr);
+            &said, &dropped);
         std::lock_guard lock(lock_);
         if (Kept* kept = find(view)) {
             kept->messages = std::move(sent);
             kept->diagnostics = std::move(said);
+            kept->dropped_diagnostics = dropped;
             messages = std::uint32_t(kept->messages.size());
             diagnostics = std::uint32_t(kept->diagnostics.size());
         }
@@ -141,6 +143,12 @@ namespace weft_unity {
         std::lock_guard lock(lock_);
         const Kept* kept = find(view);
         return kept && index < kept->diagnostics.size() ? &kept->diagnostics[index] : nullptr;
+    }
+
+    std::uint32_t PageHost::dropped_diagnostics(weft_view_handle view) const {
+        std::lock_guard lock(lock_);
+        const Kept* kept = find(view);
+        return kept ? kept->dropped_diagnostics : 0;
     }
 
     PageHost::Kept* PageHost::find(weft_view_handle view) {
@@ -212,6 +220,10 @@ weft_result weft_unity_add_fallback_family(const char* family, size_t family_siz
     return on_owner([&] { return running() ? weft_runtime_add_fallback_family(running(), family, family_size) : WEFT_STALE_HANDLE; });
 }
 
+weft_result weft_unity_add_effect(const weft_effect_desc* effect) {
+    return on_owner([&] { return running() ? weft_runtime_add_effect(running(), effect) : WEFT_STALE_HANDLE; });
+}
+
 weft_result weft_unity_view_create(const weft_view_desc* desc, weft_view_handle* out_view) {
     if (!desc || !out_view) {
         return WEFT_INVALID_ARGUMENT;
@@ -264,6 +276,65 @@ weft_result weft_unity_view_diagnostic(weft_view_handle view, uint32_t index, ui
     *out_text = kept->text.data();
     *out_size = kept->text.size();
     return WEFT_OK;
+}
+
+uint32_t weft_unity_view_dropped_diagnostics(weft_view_handle view) {
+    return PageHost::get().dropped_diagnostics(view);
+}
+
+weft_result weft_unity_view_set_storage_item(weft_view_handle view, const char* key, size_t key_size, const char* value,
+                                             size_t value_size) {
+    return on_owner([&] {
+        return running() ? weft_view_set_storage_item(running(), view, key, key_size, value, value_size) : WEFT_STALE_HANDLE;
+    });
+}
+
+weft_result weft_unity_view_clear_storage(weft_view_handle view) {
+    return on_owner([&] { return running() ? weft_view_clear_storage(running(), view) : WEFT_STALE_HANDLE; });
+}
+
+weft_result weft_unity_view_get_storage(weft_view_handle view, uint64_t revision, weft_storage_item_fn fn, void* user,
+                                        uint64_t* out_revision) {
+    return on_owner([&] {
+        return running() ? weft_view_get_storage(running(), view, revision, fn, user, out_revision) : WEFT_STALE_HANDLE;
+    });
+}
+
+weft_result weft_unity_view_evaluate(weft_view_handle view, const char* source, size_t source_size, weft_text_fn fn,
+                                     void* user) {
+    return on_owner([&] {
+        return running() ? weft_view_evaluate(running(), view, source, source_size, fn, user) : WEFT_STALE_HANDLE;
+    });
+}
+
+weft_result weft_unity_view_frame_info(weft_view_handle view, weft_view_frame_info* out_info) {
+    if (!out_info) {
+        return WEFT_INVALID_ARGUMENT;
+    }
+    weft_runtime* runtime = running();
+    if (!runtime) {
+        return WEFT_STALE_HANDLE;
+    }
+    weft_view_frame* frame = nullptr;
+    const auto acquired = weft_view_acquire_frame(runtime, view, &frame);
+    if (acquired != WEFT_OK) {
+        return acquired;
+    }
+    const auto result = weft_view_frame_get_info(frame, out_info);
+    weft_view_frame_release(frame);
+    return result;
+}
+
+weft_result weft_unity_devtools_start(const weft_devtools_desc* desc) {
+    return on_owner([&] { return running() ? weft_devtools_start(running(), desc) : WEFT_STALE_HANDLE; });
+}
+
+weft_result weft_unity_devtools_stop(void) {
+    return on_owner([] { return running() ? weft_devtools_stop(running()) : WEFT_STALE_HANDLE; });
+}
+
+weft_result weft_unity_devtools_get_info(weft_devtools_info* out_info) {
+    return on_owner([&] { return running() ? weft_devtools_get_info(running(), out_info) : WEFT_STALE_HANDLE; });
 }
 
 weft_result weft_unity_view_pointer(weft_view_handle view, const weft_pointer_event* event, uint32_t* out_prevented) {

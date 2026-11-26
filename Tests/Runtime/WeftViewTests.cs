@@ -329,6 +329,7 @@ namespace Weft.Tests
         [UnityTest]
         public IEnumerator ScriptErrorsAreDiagnostics()
         {
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("kaput"));
             Make("throw new Error('kaput');", string.Empty);
             yield return Frames(2);
             Assert.That(diagnostics.Exists(d => d.Kind == WeftDiagnosticKind.Script && d.Text.Contains("kaput")),

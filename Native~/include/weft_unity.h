@@ -30,6 +30,9 @@ weft_result weft_unity_add_font(const weft_font_face* face);
 weft_result weft_unity_set_generic_family(const char* generic, size_t generic_size, const char* family, size_t family_size);
 weft_result weft_unity_add_fallback_family(const char* family, size_t family_size);
 
+/* Owner: custom UI shader effects (background-image: -weft-effect(name)). */
+weft_result weft_unity_add_effect(const weft_effect_desc* effect);
+
 /* Owner: a View. Its resource reader reads the files its pages name (url() images) from the file system, by the paths
  * weft resolves against the page's base (an absolute path, as the C# side gives it). */
 weft_result weft_unity_view_create(const weft_view_desc* desc, weft_view_handle* out_view);
@@ -57,6 +60,28 @@ typedef struct weft_unity_message {
 weft_result weft_unity_view_message(weft_view_handle view, uint32_t index, weft_unity_message* out_message);
 weft_result weft_unity_view_diagnostic(weft_view_handle view, uint32_t index, uint32_t* out_kind, const char** out_text,
                                        size_t* out_size);
+/* Diagnostics dropped past the View's bound during its last advance. */
+uint32_t weft_unity_view_dropped_diagnostics(weft_view_handle view);
+
+/* Owner: the View's localStorage (WEFT_PAGE_WEB_PLATFORM). */
+weft_result weft_unity_view_set_storage_item(weft_view_handle view, const char* key, size_t key_size, const char* value,
+                                             size_t value_size);
+weft_result weft_unity_view_clear_storage(weft_view_handle view);
+weft_result weft_unity_view_get_storage(weft_view_handle view, uint64_t revision, weft_storage_item_fn fn, void* user,
+                                        uint64_t* out_revision);
+
+/* Owner: evaluates source in the page (weft_view_evaluate) for debug tools. */
+weft_result weft_unity_view_evaluate(weft_view_handle view, const char* source, size_t source_size, weft_text_fn fn,
+                                     void* user);
+
+/* Any thread: metadata of the View's latest published frame (weft_view_frame_get_info). */
+weft_result weft_unity_view_frame_info(weft_view_handle view, weft_view_frame_info* out_info);
+
+/* Owner: developer tools (weft_devtools_start, weft_devtools_stop, weft_devtools_get_info). In the release build these
+ * return WEFT_UNAVAILABLE. */
+weft_result weft_unity_devtools_start(const weft_devtools_desc* desc);
+weft_result weft_unity_devtools_stop(void);
+weft_result weft_unity_devtools_get_info(weft_devtools_info* out_info);
 
 /* Owner: pointer input and hit tests (weft_view_pointer, weft_view_hit_test). */
 weft_result weft_unity_view_pointer(weft_view_handle view, const weft_pointer_event* event, uint32_t* out_prevented);
@@ -119,6 +144,16 @@ typedef struct weft_unity_render_stats {
 } weft_unity_render_stats;
 
 void weft_unity_render_get_stats(weft_unity_render_stats* out_stats);
+
+/* Render-thread draw recording time accumulated for a View while measuring is on (0 cost when off). */
+typedef struct weft_unity_draw_time {
+    uint32_t slot;
+    uint32_t generation;
+    double seconds;
+} weft_unity_draw_time;
+
+void weft_unity_render_set_measuring(uint32_t enabled);
+uint32_t weft_unity_render_take_draw_times(weft_unity_draw_time* out_times, uint32_t capacity);
 
 #ifdef __cplusplus
 }

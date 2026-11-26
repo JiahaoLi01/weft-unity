@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace Weft
 {
@@ -43,8 +47,11 @@ namespace Weft
                  "of them is not the game's: GamepadUsed).")]
         [SerializeField] bool gamepads = true;
 
-        [Tooltip("Log the page's diagnostics (exceptions, missing images) as warnings.")]
+        [Tooltip("Log the page's diagnostics (exceptions, missing images, console) to Unity's console.")]
         [SerializeField] bool logDiagnostics = true;
+
+        [Tooltip("Which page elements claim the pointer for PointerOverPage: any non-root element (Element), or only elements declaring a non-default cursor (Cursor).")]
+        [SerializeField] WeftPointerRouting pointerRouting = WeftPointerRouting.Element;
 
         // The View with the keyboard focus, and whether the game's window has the system's.
         static WeftView focused;
@@ -93,11 +100,30 @@ namespace Weft
         /// <summary>What the View draws into (sRGB-encoded, premultiplied, top row first); null while disabled.</summary>
         public RenderTexture Texture => surface?.Texture;
 
-        /// <summary>Whether the mouse is over an element of the page (not its root): the game leaves such clicks to it.</summary>
+        /// <summary>Whether the mouse is over the page according to <see cref="PointerRouting"/>: the game leaves such clicks to it.</summary>
         public bool PointerOverPage { get; private set; }
 
         /// <summary>The CSS cursor under the mouse ("auto" off the page's elements).</summary>
         public string Cursor { get; private set; } = "auto";
+
+        /// <summary>Which page elements claim the pointer for <see cref="PointerOverPage"/>.</summary>
+        public WeftPointerRouting PointerRouting
+        {
+            get => pointerRouting;
+            set => pointerRouting = value;
+        }
+
+        /// <summary>The loaded page's folder name (or first script name when loaded from source without a folder).</summary>
+        public string PageName { get; private set; } = string.Empty;
+
+        /// <summary>Script/handler/frame exceptions and console errors logged since the page loaded.</summary>
+        public int ErrorCount { get; private set; }
+
+        /// <summary>Scene diagnostics, dropped diagnostics and console warnings logged since the page loaded.</summary>
+        public int WarningCount { get; private set; }
+
+        internal WeftNative.ViewHandle Handle => view;
+        internal bool IsOpen => created;
 
         public float Scale
         {
@@ -234,6 +260,9 @@ namespace Weft
                         Base = b,
                         BaseSize = (UIntPtr)baseBytes.Length,
                     };
+                    PageName = PageNameOf(next);
+                    ErrorCount = 0;
+                    WarningCount = 0;
                     var result = WeftNative.weft_unity_view_load(view, &desc);
                     // The new page gets every gamepad's state.
                     Array.Clear(gamepadVersions, 0, gamepadVersions.Length);
@@ -242,6 +271,7 @@ namespace Weft
                     {
                         WeftRuntime.Check(result, "loading the page");
                     }
+                    WeftDebugTools.OnPageLoaded(this);
                 }
             }
             finally
@@ -322,6 +352,123 @@ namespace Weft
         }
 
         /// <summary>
+        /// Sets an item of the View's <c>localStorage</c> (shared across page loads on this View; restore before <see cref="Load(WeftPage)"/>).
+        /// Pass <paramref name="remove"/> = true (or null value) to remove the key.
+        /// </summary>
+        public bool SetStorageItem(string key, string value, bool remove = false)
+        {
+            if (!created || string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+            var keyLength = WeftRuntime.Utf8(key, ref nameBuffer);
+            var valueLength = remove || value == null ? 0 : WeftRuntime.Utf8(value, ref valueBuffer);
+            fixed (byte* k = nameBuffer)
+            fixed (byte* v = valueBuffer)
+            {
+                return WeftNative.weft_unity_view_set_storage_item(view, k, (UIntPtr)keyLength,
+                    remove || value == null ? null : v, (UIntPtr)valueLength) == WeftNative.Result.Ok;
+            }
+        }
+
+        /// <summary>Removes every item from the View's <c>localStorage</c>.</summary>
+        public bool ClearStorage()
+        {
+            return created && WeftNative.weft_unity_view_clear_storage(view) == WeftNative.Result.Ok;
+        }
+
+        /// <summary>
+        /// Reads the View's <c>localStorage</c> when its revision changed since <paramref name="revision"/> (0 reads unconditionally).
+        /// Updates <paramref name="revision"/> and populates <paramref name="outItems"/>, returning true when items were updated.
+        /// </summary>
+        public bool GetStorage(ref ulong revision, Dictionary<string, string> outItems)
+        {
+            if (!created || outItems == null)
+            {
+                return false;
+            }
+            var items = new Dictionary<string, string>();
+            ulong current = 0;
+            WeftNative.StorageItemFn callback = (_, key, keySize, value, valueSize) =>
+            {
+                items[WeftNative.Text(key, keySize)] = WeftNative.Text(value, valueSize);
+            };
+            var result = WeftNative.weft_unity_view_get_storage(view, revision, callback, IntPtr.Zero, &current);
+            GC.KeepAlive(callback);
+            if (result != WeftNative.Result.Ok || (revision != 0 && current == revision))
+            {
+                return false;
+            }
+            revision = current;
+            outItems.Clear();
+            foreach (var pair in items)
+            {
+                outItems[pair.Key] = pair.Value;
+            }
+            return true;
+        }
+
+        internal bool Evaluate(string source, out string text)
+        {
+            text = string.Empty;
+            if (!created || string.IsNullOrEmpty(source))
+            {
+                return false;
+            }
+            var sourceBytes = WeftRuntime.Utf8(source);
+            var ok = false;
+            var captured = string.Empty;
+            WeftNative.TextFn callback = (_, succeeded, bytes, size) =>
+            {
+                ok = succeeded != 0;
+                captured = WeftNative.Text(bytes, size);
+            };
+            fixed (byte* s = sourceBytes)
+            {
+                var result = WeftNative.weft_unity_view_evaluate(view, s, (UIntPtr)sourceBytes.Length, callback, IntPtr.Zero);
+                GC.KeepAlive(callback);
+                if (result != WeftNative.Result.Ok)
+                {
+                    return false;
+                }
+            }
+            text = captured;
+            return ok;
+        }
+
+        internal bool IsFrameAnimated()
+        {
+            if (!created)
+            {
+                return false;
+            }
+            var info = new WeftNative.ViewFrameInfo { StructSize = (uint)sizeof(WeftNative.ViewFrameInfo) };
+            return WeftNative.weft_unity_view_frame_info(view, &info) == WeftNative.Result.Ok && info.Animated != 0;
+        }
+
+        static string PageNameOf(WeftPage source)
+        {
+            if (!string.IsNullOrEmpty(source.Base))
+            {
+                var normalized = source.Base.Replace('\\', '/');
+                var dir = normalized.EndsWith("/", StringComparison.Ordinal)
+                    ? normalized.TrimEnd('/')
+                    : Path.GetDirectoryName(normalized)?.Replace('\\', '/') ?? string.Empty;
+                var folder = Path.GetFileName(dir);
+                if (!string.IsNullOrEmpty(folder))
+                {
+                    return folder;
+                }
+                return normalized;
+            }
+            if (source.Scripts.Count > 0 && !string.IsNullOrEmpty(source.Scripts[0].Name))
+            {
+                return Path.GetFileNameWithoutExtension(source.Scripts[0].Name);
+            }
+            return "page";
+        }
+
+        /// <summary>
         /// A pointer event at a point in the View's logical px; true when a listener prevented its default action. The
         /// modifiers held (Shift extends a text field's selection to a press) are the keyboard's unless given.
         /// </summary>
@@ -357,7 +504,12 @@ namespace Weft
                 WheelY = wheel.y,
             };
             uint prevented = 0;
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
             WeftNative.weft_unity_view_pointer(view, &e, &prevented);
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
             return prevented != 0;
         }
 
@@ -575,7 +727,13 @@ namespace Weft
                 gamepadHas[s] &= ~cameUp[s];
             }
             var handled = stackalloc uint[WeftNative.GamepadSlots];
-            if (WeftNative.weft_unity_view_gamepads(view, states, (uint)count, handled) != WeftNative.Result.Ok)
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
+            var result = WeftNative.weft_unity_view_gamepads(view, states, (uint)count, handled);
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
+            if (result != WeftNative.Result.Ok)
             {
                 return;
             }
@@ -636,9 +794,14 @@ namespace Weft
                 return WeftInputResult.None;
             }
             uint handled = 0;
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
             var result = WeftNative.weft_unity_view_text(view, text, (UIntPtr)size, &handled) == WeftNative.Result.Ok
                 ? (WeftInputResult)handled
                 : WeftInputResult.None;
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
             if (result != WeftInputResult.None)
             {
                 Used(lastDown, lastDownCode);
@@ -663,7 +826,13 @@ namespace Weft
                 Flags = (down && repeat ? WeftNative.KeyRepeat : 0) | (ime ? WeftNative.KeyIme : 0),
             };
             uint handled = 0;
-            return WeftNative.weft_unity_view_key(view, &e, &handled) == WeftNative.Result.Ok ? (WeftInputResult)handled : WeftInputResult.None;
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
+            var result = WeftNative.weft_unity_view_key(view, &e, &handled) == WeftNative.Result.Ok ? (WeftInputResult)handled : WeftInputResult.None;
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
+            return result;
         }
 
         void Used(int index, string code)
@@ -709,7 +878,13 @@ namespace Weft
                 return new WeftHit(false, "auto");
             }
             var hit = new WeftNative.Hit {StructSize = (uint)sizeof(WeftNative.Hit)};
-            if (WeftNative.weft_unity_view_hit_test(view, position.x, position.y, &hit) != WeftNative.Result.Ok)
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
+            var result = WeftNative.weft_unity_view_hit_test(view, position.x, position.y, &hit);
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
+            if (result != WeftNative.Result.Ok)
             {
                 return new WeftHit(false, "auto");
             }
@@ -756,6 +931,7 @@ namespace Weft
             WeftRuntime.Check(WeftNative.weft_unity_view_create(&desc, &handle), "creating a View");
             view = handle;
             created = true;
+            WeftDebugTools.Register(this);
             time = 0;
             appliedScale = scale;
             surface = new WeftSurface();
@@ -778,6 +954,7 @@ namespace Weft
 
         void OnDisable()
         {
+            WeftDebugTools.Unregister(this);
             if (created && WeftRuntime.IsRunning)
             {
                 WeftNative.weft_unity_view_destroy(view);
@@ -838,7 +1015,7 @@ namespace Weft
                 sendPointer ??= SendPointer;
                 pointer.Poll(scale, sendPointer);
                 var hit = pointer.Inside ? HitTest(pointer.Position) : new WeftHit(false, "auto");
-                PointerOverPage = hit.Element;
+                PointerOverPage = pointerRouting == WeftPointerRouting.Cursor ? hit.Interactive : hit.Element;
                 Cursor = hit.Cursor;
             }
             Advance();
@@ -848,7 +1025,12 @@ namespace Weft
         {
             if (created)
             {
+                var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
                 surface.Draw(view, scale);
+                if (started != 0)
+                {
+                    WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+                }
             }
         }
 
@@ -889,7 +1071,13 @@ namespace Weft
         {
             time = PageTime;
             uint messages = 0, diagnostics = 0;
+            var started = WeftDebugTools.IsMeasuring ? Stopwatch.GetTimestamp() : 0;
             var result = WeftNative.weft_unity_view_advance(view, time, &messages, &diagnostics);
+            if (started != 0)
+            {
+                WeftDebugTools.AddGameCost(this, Stopwatch.GetTimestamp() - started);
+            }
+            var label = string.IsNullOrEmpty(PageName) ? name : PageName;
             for (uint i = 0; i < diagnostics; ++i)
             {
                 uint kind;
@@ -900,15 +1088,45 @@ namespace Weft
                     continue;
                 }
                 var diagnostic = new WeftDiagnostic((WeftDiagnosticKind)kind, WeftNative.Text(text, textSize));
-                if (logDiagnostics)
+                switch (diagnostic.Kind)
                 {
-                    Debug.LogWarning($"weft ({name}): {diagnostic.Kind}: {diagnostic.Text}", this);
+                    case WeftDiagnosticKind.Console:
+                        if (logDiagnostics)
+                        {
+                            Debug.Log($"weft [{label}]: {diagnostic.Text}", this);
+                        }
+                        break;
+                    case WeftDiagnosticKind.ConsoleWarning:
+                    case WeftDiagnosticKind.Scene:
+                        ++WarningCount;
+                        if (logDiagnostics)
+                        {
+                            Debug.LogWarning($"weft [{label}]: {diagnostic.Text}", this);
+                        }
+                        break;
+                    default:
+                        ++ErrorCount;
+                        if (logDiagnostics)
+                        {
+                            Debug.LogError($"weft [{label}]: {diagnostic.Text}", this);
+                        }
+                        break;
                 }
                 DiagnosticReceived?.Invoke(diagnostic);
             }
+            var dropped = WeftNative.weft_unity_view_dropped_diagnostics(view);
+            if (dropped > 0)
+            {
+                WarningCount += (int)dropped;
+                if (logDiagnostics)
+                {
+                    Debug.LogWarning($"weft [{label}]: {dropped} diagnostics dropped past the view's bound", this);
+                }
+            }
             if (result == WeftNative.Result.Faulted)
             {
-                Debug.LogError($"weft ({name}): a resource limit ended the page; load a page again", this);
+                ++ErrorCount;
+                Debug.LogError($"weft [{label}]: a resource limit ended the page; load a page again", this);
             }
             for (uint i = 0; i < messages; ++i)
             {
